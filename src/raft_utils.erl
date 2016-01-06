@@ -2,9 +2,9 @@
 
 -export([ cancel_election_timer/1
         , cast/2
+        , handle_requestVoteRPC/2
         , maybe_start_election_timer/2
         , multi_cast/2
-        , safe_send/2
         ]).
 
 -include("gen_raft_private.hrl").
@@ -42,16 +42,15 @@ cancel_election_timer({MsgRef, Tref}) ->
   end.
 
 %% @doc Send a message to (maybe remote) peer. Ignore exception if any.
--spec cast(raft_peer(), term()) -> ok.
+-spec cast(pid() | raft_peer(), term()) -> ok.
 cast(?raft_peer(Node, Name), Msg) ->
   Dst = case Node =:= node() of
           true  -> Name;
           false -> {Name, Node}
         end,
-  try erlang:send(Dst, Msg)
-  catch _ : _ -> ok
-  end,
-  ok.
+  do_cast(Dst, Msg);
+cast(Pid, Msg) when is_pid(Pid) ->
+  do_cast(Pid, Msg).
 
 %% @doc Send a message to (maybe remote) peers. Ignore exceptions if any.
 -spec multi_cast(raft_peers(), raft_msg()) -> ok.
@@ -59,14 +58,15 @@ multi_cast(Peers, Msg) ->
   lists:foreach(fun(Peer) -> ok = cast(Peer, Msg) end,
                 ordsets:to_list(Peers)).
 
-
-%% @doc Send a message to pid without crashing.
--spec safe_send(pid(), term()) -> ok.
-safe_send(Pid, Msg) ->
-  try Pid ! Msg
-  catch _ : _ -> ok
-  end,
-  ok.
+%% @doc Handle requestVoteRPC, update raft meta, send reply.
+handle_requestVoteRPC(?raft_requestVoteRPC(FromPeer, ProposedTerm, LastApplied),
+                      #?state{ raft_meta = RaftMeta
+                             } = State) ->
+  {VoteGranted, NewRaftMeta} =
+    raft_meta:maybe_grant_vote(FromPeer, ProposedTerm, LastApplied, RaftMeta),
+  {ok, NewState} = gen_raft:put_raft_meta(NewRaftMeta, State),
+  ok = send_requestVoteReply(FromPeer, VoteGranted, NewRaftMeta),
+  {ok, NewState}.
 
 %%%*_/ internal functions ======================================================
 
@@ -80,10 +80,25 @@ start_election_timer(BaseTime) ->
   Tref = timer:send_after(Timeout, ?raft_electionTimeout(MsgRef)),
   {MsgRef, Tref}.
 
-
 %% @private Get randomised election timeout value.
 %% time varies from BaseTime to 2*BaseTime.
 -spec randomised_election_timeout(timer:time()) -> timer:time().
 randomised_election_timeout(BaseTime) ->
   random:uniform(BaseTime) + BaseTime.
+
+-spec do_cast(pid() | raft_name() | {raft_name(), node()}, term()) -> ok.
+do_cast(Dst, Msg) ->
+  try erlang:send(Dst, Msg)
+  catch _ : _ -> ok
+  end,
+  ok.
+
+%% @private Reply requestVoteRPC.
+-spec send_requestVoteReply(raft_peer(), boolean(), raft_meta()) -> ok.
+send_requestVoteReply(ReplyToPeer, VoteGranted, RaftMeta) ->
+  MyId = raft_meta:get_myId(RaftMeta),
+  MyTerm = raft_meta:get_currentTerm(RaftMeta),
+  Reply = ?raft_requestVoteReply(MyId, VoteGranted, MyTerm),
+  ok = cast(ReplyToPeer, Reply).
+
 

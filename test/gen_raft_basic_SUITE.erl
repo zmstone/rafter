@@ -26,40 +26,71 @@ all() -> [F || {F, _A} <- module_info(exports),
 %%%_* gen_rat callbacks ========================================================
 
 -record(state,
-        { tester_pid
+        { name
+        , tester_pid
         }).
 
-init([Pid]) -> {ok, #state{tester_pid = Pid}}.
+init([Name, Pid]) ->
+  {ok, #state{ name       = Name
+             , tester_pid = Pid
+             }}.
 
 terminate(_Reason, _State) -> ok.
 
 elected(#state{tester_pid = Pid} = State) ->
-  Pid ! elected,
+  Pid ! {elected, self()},
   {ok, State}.
 
 %%%_* Test functions ===========================================================
 
 t_one_node_cluster(Config) when is_list(Config) ->
-  erlang:system_flag(backtrace_depth, 10),
   {ok, Dir} = file:get_cwd(),
-  MyId = {node(), ?MODULE},
+  Name = node1,
+  MyId = {node(), Name},
   ok = gen_raft:create_node(Dir, MyId, []),
-  RaftInitArgs =
-    [ {metadata_dir, Dir}
-    ],
-  {ok, Pid} =
-    gen_raft:start_link(_Name = ?MODULE,
-                        RaftInitArgs,
-                        _CbMod = ?MODULE,
-                        _CbArgs = [self()],
-                        _Options = []),
+  RaftInitArgs = [ {metadata_dir, Dir} ],
+  {ok, Pid} = start_gen_raft(Name, RaftInitArgs),
   receive
-    elected ->
+    {elected, Pid} ->
       ok
-  after 1000 ->
+  after 2000 ->
     ct:fail(timeout)
   end,
   ?assert(gen_raft:is_leader(Pid)),
   ok = gen_raft:stop(Pid),
   ok.
+
+t_two_node_cluster(Config) when is_list(Config) ->
+  {ok, Dir} = file:get_cwd(),
+  Node1 = {node(), node1},
+  Node2 = {node(), node2},
+  ok = gen_raft:create_node(Dir, Node1, [Node2]),
+  ok = gen_raft:create_node(Dir, Node2, [Node1]),
+  RaftInitArgs = [ {metadata_dir, Dir} ],
+  {ok, Pid1} = start_gen_raft(node1, RaftInitArgs),
+  {ok, Pid2} = start_gen_raft(node2, RaftInitArgs),
+  Leader =
+    receive
+      {elected, Pid1} ->
+        Pid1;
+      {elected, Pid2} ->
+        Pid2
+    after 2000 ->
+      ct:faile(timeout)
+    end,
+  case Leader of
+    Pid1 -> ?assert(gen_raft:is_leader(Pid1));
+    Pid2 -> ?assertNot(gen_raft:is_leader(Pid2))
+  end,
+  ok = gen_raft:stop(Pid1),
+  ok = gen_raft:stop(Pid2),
+  ok.
+
+%%%_* Help functions ===========================================================
+
+start_gen_raft(Name, RaftInitArgs) ->
+  gen_raft:start_link(Name, RaftInitArgs,
+                      _CbMod = ?MODULE,
+                      _CbArgs = [Name, self()],
+                      _Options = []).
 

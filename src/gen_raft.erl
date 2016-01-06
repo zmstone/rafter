@@ -204,7 +204,7 @@ handle_gen_raft_msg(?gen_raft_cast(Msg), State) ->
 handle_gen_raft_msg(?gen_raft_call(Ref, From, Call), State) ->
   {Result, NewState} = handle_gen_raft_call(Call, State),
   Reply = ?gen_raft_reply(Ref, Result),
-  ok = raft_utils:safe_send(From, Reply),
+  ok = raft_utils:cast(From, Reply),
   ?MODULE:loop(NewState).
 
 terminate(Reason, #?state{ name     = Name
@@ -325,7 +325,7 @@ call_priv(Name, Call) when is_atom(Name) ->
 call_priv(Pid, Call) when is_pid(Pid) ->
   From = self(),
   Mref = erlang:monitor(process, Pid),
-  ok = raft_utils:safe_send(Pid, ?gen_raft_call(Mref, From, Call)),
+  ok = raft_utils:cast(Pid, ?gen_raft_call(Mref, From, Call)),
   receive
     {'DOWN', Mref, process, Pid, Reason} ->
       erlang:error(Reason);
@@ -336,5 +336,5 @@ call_priv(Pid, Call) when is_pid(Pid) ->
 
 cast_priv(Name_or_Pid, Msg) ->
   GenRaftMsg = ?gen_raft_cast(Msg),
-  ok = raft_utils:safe_send(Name_or_Pid, GenRaftMsg).
+  ok = raft_utils:cast(Name_or_Pid, GenRaftMsg).
 

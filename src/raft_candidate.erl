@@ -34,18 +34,8 @@ become(InitArgs, #?state{raft_meta = RaftMeta} = State) ->
                },
   gen_raft:loop(State#?state{raft_state = RaftState}).
 
-handle_msg(?raft_requestVoteRPC(FromPeer, ProposedTerm, LastApplied),
-           #?state{ raft_meta = RaftMeta
-                  } = State) ->
-  VoteGranted = is_grant_vote_to(RaftMeta, FromPeer, ProposedTerm, LastApplied),
-  %% update my term if I receive a higher term in the request
-  NewRaftMeta1 = raft_meta:maybe_update_currentTerm(RaftMeta, ProposedTerm),
-  NewRaftMeta = case VoteGranted of
-                  true  -> raft_meta:set_votedFor(NewRaftMeta1, FromPeer);
-                  false -> NewRaftMeta1
-                end,
-  {ok, NewState} = gen_raft:put_raft_meta(NewRaftMeta, State),
-  ok = send_requestVoteReply(_SendTo = FromPeer, NewRaftMeta, VoteGranted),
+handle_msg(?raft_requestVoteRPC(_, _, _) = RPC, State) ->
+  {ok, NewState} = raft_utils:handle_requestVoteRPC(RPC, State),
   gen_raft:loop(NewState);
 handle_msg(?raft_requestVoteReply(FromPeer, VoteGranted, PeerTerm),
            #?state{ name      = Name
@@ -71,34 +61,6 @@ handle_msg(?raft_requestVoteReply(FromPeer, VoteGranted, PeerTerm),
 
 getarg(Name, Args, Default) ->
   proplists:get_value(Name, Args, Default).
-
-%% @doc Return true if I should grant vote to a request.
--spec is_grant_vote_to(raft_meta(), raft_peer(), raft_term(), raft_tick()) ->
-        boolean().
-is_grant_vote_to(RaftMeta, FromPeer, ProposedTerm, LastApplied_Peer) ->
-  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
-  case ProposedTerm < MyCurrentTerm of
-    true  ->
-      false;
-    false ->
-      VotedFor = raft_meta:get_votedFor(RaftMeta),
-      LastApplied = raft_meta:get_lastApplied(RaftMeta),
-      %% if we have not voted for someone else
-      case VotedFor =:= ?undef orelse VotedFor =:= FromPeer of
-        true  ->
-          %% if our state machine is NOT more up-to-date
-          not (LastApplied > LastApplied_Peer);
-        false ->
-          false
-      end
-  end.
-
--spec send_requestVoteReply(raft_peer(), raft_meta(), boolean()) -> ok.
-send_requestVoteReply(ReplyToPeer, RaftMeta, VoteGranted) ->
-  MyId = raft_meta:get_myId(RaftMeta),
-  MyTerm = raft_meta:get_currentTerm(RaftMeta),
-  Reply = ?raft_requestVoteReply(MyId, VoteGranted, MyTerm),
-  raft_utils:cast(ReplyToPeer, Reply).
 
 -spec handle_requestVoteReply(raft_peer(), boolean(), #?state{}) -> no_return().
 handle_requestVoteReply(FromPeer, _VoteGramted = true,
