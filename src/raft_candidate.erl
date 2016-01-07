@@ -19,13 +19,16 @@
 
 -opaque candidate() :: #?candidate{}.
 
-become(InitArgs, #?state{raft_meta = RaftMeta} = State) ->
+become(InitArgs, #?state{ raft_meta = RaftMeta
+                        , raft_logs = RaftLogs
+                        } = State) ->
   ElectionTimeout = getarg(election_timeout, InitArgs,
                            ?DEFAULT_ELECTION_TIMEOUT),
   {ok, NewRaftMeta} = raft_meta:bump_term(RaftMeta),
   %% send to all peers including myself, %% TODO, maybe skip self?
   Peers = raft_meta:get_all_members(NewRaftMeta),
-  Request = raft_meta:make_requestVoteRPC(NewRaftMeta),
+  LastTick = raft_logs:get_lastTick(RaftLogs),
+  Request = raft_meta:make_requestVoteRPC(NewRaftMeta, LastTick),
   ok = raft_utils:multi_cast(Peers, Request),
   TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
   RaftState =
@@ -50,11 +53,16 @@ handle_msg(?raft_requestVoteReply(FromPeer, VoteGranted, PeerTerm),
       ?info("[~p:term=~w]: vote ~s by ~w\n",
             [Name, MyCurrentTerm, Result, FromPeer]),
       handle_requestVoteReply(FromPeer, VoteGranted, State);
-    MyCurrentTerm when MyCurrentTerm  >  PeerTerm ->
+    MyCurrentTerm when MyCurrentTerm > PeerTerm ->
       ?info("[~p:term=~w]: discarded stale requestVoteReply "
             "from=~p, result=~p, peer-term=~p\n",
             [Name, MyCurrentTerm, FromPeer, VoteGranted, PeerTerm]),
-      gen_raft:loop(State)
+       gen_raft:loop(State);
+    MyCurrentTerm when MyCurrentTerm < PeerTerm ->
+      ?info("[~p:term=~w]: higher term received from ~p, peer-term=~w\n",
+            [Name, MyCurrentTerm, FromPeer, PeerTerm]),
+      NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
+      gen_raft:loop(State#?state{raft_meta = NewRaftMeta})
   end.
 
 %%%*_/ internal functions ======================================================

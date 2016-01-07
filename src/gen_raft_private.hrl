@@ -23,6 +23,7 @@
 -type timer_ref() :: {reference(), timer:tref()}.
 -type raft_meta() :: raft_meta:raft_meta().
 -type serialized_raft_meta() :: binary().
+-type raft_logs() :: raft_logs:logs().
 -type init_arg_name() :: metadata_dir
                        | election_timeout.
 -type init_arg_value() :: term().
@@ -38,9 +39,10 @@
         , parent     :: pid()
         , cb_mod     :: module()
         , cb_state   :: term()
-        , raft_meta  :: raft_meta()
-        , raft_state :: raft_state()
         , meta_fd    :: file:fd()
+        , raft_meta  :: raft_meta()
+        , raft_logs  :: raft_logs()
+        , raft_state :: raft_state()
         , debug = [] :: list()
         }).
 
@@ -51,9 +53,9 @@
 -define(DEFAULT_ELECTION_TIMEOUT, 500).
 
 -record(requestVoteRPC,
-        { fromPeer    :: raft_peer()
-        , newTerm     :: raft_term()
-        , lastApplied :: raft_tick()
+        { fromPeer :: raft_peer()
+        , newTerm  :: raft_term()
+        , lastTick :: raft_tick()
         }).
 
 -record(requestVoteReply,
@@ -69,10 +71,10 @@
 -define(gen_raft_reply(Ref, Result), {'$gen_raft', {reply, Ref, Result}}).
 
 -define(raft_electionTimeout(MsgRef), {'$raft', {electionTimeout, MsgRef}}).
--define(raft_requestVoteRPC(FromWhichPeer, ProposedTerm, LastApplied),
-        {'$raft', #requestVoteRPC{ fromPeer    = FromWhichPeer
-                                 , newTerm     = ProposedTerm
-                                 , lastApplied = LastApplied
+-define(raft_requestVoteRPC(FromWhichPeer, ProposedTerm, LastTick),
+        {'$raft', #requestVoteRPC{ fromPeer = FromWhichPeer
+                                 , newTerm  = ProposedTerm
+                                 , lastTick = LastTick
                                  }}).
 -define(raft_requestVoteReply(FromWhichPeer, VoteGranted, PeerTerm),
         {'$raft', #requestVoteReply{ fromPeer    = FromWhichPeer

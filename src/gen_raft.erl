@@ -189,11 +189,13 @@ handle_gen_raft_msg(?gen_raft_init(InitArgs),
   {ok, MetadataFd} = open_metadata_fd(Name, InitArgs),
   case get_raft_meta(Name, MetadataFd) of
     {ok, RaftMeta} ->
+      {ok, RaftLogs} = raft_logs:init(RaftMeta),
       {ok, RaftState} = raft_follower:init(RaftMeta, InitArgs),
       gen_raft:loop(
-        State#?state{ raft_meta  = RaftMeta
+        State#?state{ meta_fd    = MetadataFd
+                    , raft_meta  = RaftMeta
                     , raft_state = RaftState
-                    , meta_fd    = MetadataFd
+                    , raft_logs  = RaftLogs
                     });
     {error, Reason} ->
       terminate(Reason, State)

@@ -9,6 +9,9 @@
 
 -include("gen_raft_private.hrl").
 
+
+%%%*_/ APIs ====================================================================
+
 %% @doc Start election timer only if I am a cluster member.
 %% Two possible reasons for me to initialize when I'm not a member:
 %% 1. I am a newly initialized node and waiting to be added to the cluster
@@ -59,11 +62,14 @@ multi_cast(Peers, Msg) ->
                 ordsets:to_list(Peers)).
 
 %% @doc Handle requestVoteRPC, update raft meta, send reply.
-handle_requestVoteRPC(?raft_requestVoteRPC(FromPeer, ProposedTerm, LastApplied),
+handle_requestVoteRPC(?raft_requestVoteRPC(FromPeer, ProposedTerm, LastTick),
                       #?state{ raft_meta = RaftMeta
+                             , raft_logs = RaftLogs
                              } = State) ->
+  MyLastTick = raft_logs:get_lastTick(RaftLogs),
   {VoteGranted, NewRaftMeta} =
-    raft_meta:maybe_grant_vote(FromPeer, ProposedTerm, LastApplied, RaftMeta),
+    raft_meta:maybe_grant_vote(FromPeer, ProposedTerm, LastTick,
+                               MyLastTick, RaftMeta),
   {ok, NewState} = gen_raft:put_raft_meta(NewRaftMeta, State),
   ok = send_requestVoteReply(FromPeer, VoteGranted, NewRaftMeta),
   {ok, NewState}.

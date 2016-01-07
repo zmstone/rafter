@@ -11,13 +11,14 @@
         , get_myId/1
         , get_peer_members/1
         , get_votedFor/1
-        , make_requestVoteRPC/1
-        , maybe_grant_vote/4
+        , make_requestVoteRPC/2
+        , maybe_grant_vote/5
         , is_cluster_member/1
         ]).
 
 -export([ bump_term/1
         , maybe_update_currentTerm/2
+        , update_currentTerm/2
         , set_votedFor/2
         ]).
 
@@ -118,6 +119,11 @@ bump_term(#meta{currentTerm = CurrentTerm} = Meta) ->
 maybe_update_currentTerm(#meta{currentTerm = CurrentTerm} = Meta, NewTerm) ->
   Meta#meta{currentTerm = max(CurrentTerm, NewTerm)}.
 
+-spec update_currentTerm(meta(), raft_term()) -> meta().
+update_currentTerm(#meta{currentTerm = CurrentTerm} = Meta, NewTerm) ->
+  true = (CurrentTerm < NewTerm),
+  Meta#meta{currentTerm = NewTerm}.
+
 -spec set_votedFor(meta(), raft_peer()) -> meta().
 set_votedFor(Meta, VotedFor) ->
   Meta#meta{votedFor = VotedFor}.
@@ -134,20 +140,23 @@ get_lastApplied(#meta{lastApplied = LastApplied}) -> LastApplied.
 -spec get_votedFor(meta()) -> ?undef | raft_peer().
 get_votedFor(#meta{votedFor = VotedFor}) -> VotedFor.
 
--spec make_requestVoteRPC(meta()) -> raft_requestVoteRPC().
-make_requestVoteRPC(#meta{} = Meta) ->
-  ?raft_requestVoteRPC(_FromPeer    = get_myId(Meta),
-                       _NewTerm     = get_currentTerm(Meta),
-                       _LastApplied = get_lastApplied(Meta)).
+-spec make_requestVoteRPC(meta(), raft_tick()) -> raft_requestVoteRPC().
+make_requestVoteRPC(#meta{} = Meta, LastTick) ->
+  ?raft_requestVoteRPC(_FromPeer = get_myId(Meta),
+                       _NewTerm  = get_currentTerm(Meta),
+                       _LastTick = LastTick).
 
 %% @doc Maybe or maybe not grant vote to a requestVoteRPC.
 -spec maybe_grant_vote(FromPeer     :: raft_peer(),
                        ProposedTerm :: raft_term(),
-                       LastApplied  :: raft_tick(),
+                       PeerLastTick :: raft_tick(),
+                       MyLastTick   :: raft_tick(),
                        RaftMeta     :: meta()) ->
         {VoteGranted :: boolean(), NewRaftMeta :: meta()}.
-maybe_grant_vote(FromPeer, ProposedTerm, LastApplied, RaftMeta) ->
-  VoteGranted = is_grant_vote_to(FromPeer, ProposedTerm, LastApplied, RaftMeta),
+maybe_grant_vote(FromPeer, ProposedTerm, PeerLastTick,
+                 MyLastTick, RaftMeta) ->
+  VoteGranted = is_grant_vote_to(FromPeer, ProposedTerm, PeerLastTick,
+                                 MyLastTick, RaftMeta),
   %% update my term if I receive a higher term in the request
   NewRaftMeta1 = maybe_update_currentTerm(RaftMeta, ProposedTerm),
   NewRaftMeta = case VoteGranted of
@@ -159,21 +168,21 @@ maybe_grant_vote(FromPeer, ProposedTerm, LastApplied, RaftMeta) ->
 %%%*_/ internal functions ======================================================
 
 %% @private Return true if I should grant vote to a request.
--spec is_grant_vote_to(raft_peer(), raft_term(), raft_tick(), raft_meta()) ->
-        boolean().
-is_grant_vote_to(FromPeer, ProposedTerm, LastApplied_Peer, RaftMeta) ->
+-spec is_grant_vote_to(raft_peer(), raft_term(), raft_tick(),
+                       raft_tick(), raft_meta()) -> boolean().
+is_grant_vote_to(FromPeer, ProposedTerm,
+                 PeerLastTick, MyLastTick, RaftMeta) ->
   MyCurrentTerm = get_currentTerm(RaftMeta),
   case ProposedTerm < MyCurrentTerm of
     true  ->
       false;
     false ->
       VotedFor = get_votedFor(RaftMeta),
-      LastApplied = get_lastApplied(RaftMeta),
       %% if we have not voted for someone else
       case VotedFor =:= ?undef orelse VotedFor =:= FromPeer of
         true  ->
           %% if our state machine is NOT more up-to-date
-          not (LastApplied > LastApplied_Peer);
+          not (MyLastTick > PeerLastTick);
         false ->
           false
       end

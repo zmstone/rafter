@@ -71,19 +71,46 @@ t_two_node_cluster(Config) when is_list(Config) ->
   {ok, Pid2} = start_gen_raft(node2, RaftInitArgs),
   Leader =
     receive
-      {elected, Pid1} ->
-        Pid1;
-      {elected, Pid2} ->
-        Pid2
+      {elected, Pid} ->
+        Pid
     after 2000 ->
       ct:faile(timeout)
     end,
+  %timer:sleep(2000),
   case Leader of
     Pid1 -> ?assert(gen_raft:is_leader(Pid1));
     Pid2 -> ?assertNot(gen_raft:is_leader(Pid2))
   end,
   ok = gen_raft:stop(Pid1),
   ok = gen_raft:stop(Pid2),
+  ok.
+
+t_three_node_cluster(Config) when is_list(Config) ->
+  {ok, Dir} = file:get_cwd(),
+  Names = [node1, node2, node3],
+  Ids = [{node(), Name} || Name <- Names],
+  lists:foreach(
+    fun(Id) ->
+      ok = gen_raft:create_node(Dir, Id, Ids)
+    end, Ids),
+  RaftInitArgs = [ {metadata_dir, Dir} ],
+  Pids =
+    lists:map(
+      fun(Name) ->
+        {ok, Pid} = start_gen_raft(Name, RaftInitArgs),
+        Pid
+      end, Names),
+  Leader =
+    receive
+      {elected, Pid} ->
+        Pid
+    after 2000 ->
+      ct:faile(timeout)
+    end,
+  %timer:sleep(2000),
+  ?assert(lists:member(Leader, Pids)),
+  ?assert(gen_raft:is_leader(Leader)),
+  lists:foreach(fun(Pid) -> gen_raft:stop(Pid) end, Pids),
   ok.
 
 %%%_* Help functions ===========================================================
