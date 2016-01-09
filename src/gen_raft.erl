@@ -9,7 +9,8 @@
         ]).
 
 %% internal exports
--export([ loop/1
+-export([ continue/1
+        , loop/1
         , init_it/6
         , put_raft_meta/2
         , terminate/2
@@ -31,7 +32,8 @@
 %%%*_/ Callback definitions ====================================================
 
 -callback init(CbModArgs :: term()) ->
-            {ok, CbState :: cb_state()} | {error, Reason :: any()}.
+            {ok, LastTick :: ?undef | raft_tick(), CbState :: cb_state()} |
+            {error, Reason :: any()}.
 
 -callback terminate(Reason :: term(), CbModArgs :: term()) -> any().
 
@@ -90,12 +92,14 @@ init_it(Starter, self, {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts) ->
 init_it(Starter, Parent, {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts) ->
   _ = random:seed(os:timestamp()),
   case CbMod:init(CbModArgs) of
-    {ok, CbState} ->
+    {ok, LastTick, CbState} ->
+      {ok, RaftLogs} = raft_logs:new(LastTick),
       State = #?state{ parent     = Parent
                      , name       = Name
                      , cb_mod     = CbMod
                      , cb_state   = CbState
                      , raft_state = ?undef
+                     , raft_logs  = RaftLogs
                      , debug      = proplists:get_value(debug, Opts, [])
                      },
       proc_lib:init_ack(Starter, {ok, self()}),
@@ -110,8 +114,18 @@ init_it(Starter, Parent, {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts) ->
       exit(Reason)
   end.
 
-%% @hidden The main loop.
-loop(#?state{parent = Parent, debug = Debug} = State) ->
+%% @doc gen_raft application internal API.
+continue(#?state{raft_meta = RaftMeta} = State) ->
+  case get(raft_meta) =:= RaftMeta of
+    true  -> ok;
+    false -> ok = do_put_raft_meta(State)
+  end,
+  ?MODULE:loop(State).
+
+%% @hidden gen_raft module internal API.
+loop(#?state{ parent = Parent
+            , debug  = Debug
+            } = State) ->
   receive
     {'EXIT', Parent, Reason} ->
       %% in case callback module is trapping exit
@@ -146,10 +160,7 @@ format_status(Opt, Status) ->
   %% TODO call callback module's format_status API if exported
   {Opt, Status}.
 
-%% @doc Put raft metadata to gen_raft looping state, call callback module.
-%% to update it too. whether or not flush to disk it is up to the callback
-%% implementation.
-%% @end
+%% @doc Put raft metadata to gen_raft looping state.
 -spec put_raft_meta(raft_meta(), #?state{}) ->
         {ok, #?state{}} | no_return().
 put_raft_meta(NewMeta, #?state{raft_meta = OldMeta} = State0) ->
@@ -158,7 +169,8 @@ put_raft_meta(NewMeta, #?state{raft_meta = OldMeta} = State0) ->
       {ok, State0};
     false ->
       State = State0#?state{raft_meta = NewMeta},
-      do_put_raft_meta(State)
+      ok = do_put_raft_meta(State),
+      {ok, State}
   end.
 
 %%%*_/ internal functions ======================================================
@@ -189,13 +201,11 @@ handle_gen_raft_msg(?gen_raft_init(InitArgs),
   {ok, MetadataFd} = open_metadata_fd(Name, InitArgs),
   case get_raft_meta(Name, MetadataFd) of
     {ok, RaftMeta} ->
-      {ok, RaftLogs} = raft_logs:init(RaftMeta),
       {ok, RaftState} = raft_follower:init(RaftMeta, InitArgs),
-      gen_raft:loop(
+      ?MODULE:loop(
         State#?state{ meta_fd    = MetadataFd
                     , raft_meta  = RaftMeta
                     , raft_state = RaftState
-                    , raft_logs  = RaftLogs
                     });
     {error, Reason} ->
       terminate(Reason, State)
@@ -259,10 +269,10 @@ ts() ->
 -spec do_put_raft_meta(state()) -> ok.
 do_put_raft_meta(#?state{ raft_meta = RaftMeta
                         , meta_fd   = Fd
-                        } = State) ->
+                        }) ->
   {ok, IoData} = raft_meta:serialize(RaftMeta),
-  ok = file:pwrite(Fd, _Bof = 0, IoData),
-  {ok, State}.
+  put(raft_meta, RaftMeta),
+  ok = file:pwrite(Fd, _Bof = 0, IoData).
 
 -spec open_metadata_fd(raft_name(), raft_init_args()) ->
         {ok, file:fd()} | no_return().

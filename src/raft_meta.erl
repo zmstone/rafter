@@ -7,19 +7,16 @@
 
 -export([ get_all_members/1
         , get_currentTerm/1
-        , get_lastApplied/1
         , get_myId/1
         , get_peer_members/1
         , get_votedFor/1
-        , make_requestVoteRPC/2
-        , maybe_grant_vote/5
         , is_cluster_member/1
+        , make_requestVoteRPC/2
         ]).
 
 -export([ bump_term/1
-        , maybe_update_currentTerm/2
+        , maybe_grant_vote/5
         , update_currentTerm/2
-        , set_votedFor/2
         ]).
 
 -export_type([ meta/0
@@ -33,12 +30,11 @@
 -define(MF(FN), erlang:error({mandator_field_init_error, FN})).
 
 -record(meta,
-        { myId           = ?MF(myId)        :: raft_peer()
-        , members        = ?MF(members)     :: raft_peers()
-        , changingMember = ?undef           :: changingMember()
-        , votedFor       = ?undef           :: ?undef | raft_peer()
-        , currentTerm    = 0                :: raft_term()
-        , lastApplied    = ?raft_tick(0, 0) :: raft_tick()
+        { myId           = ?MF(myId)    :: raft_peer()
+        , members        = ?MF(members) :: raft_peers()
+        , changingMember = ?undef       :: changingMember()
+        , votedFor       = ?undef       :: ?undef | {raft_term(), raft_peer()}
+        , currentTerm    = 0            :: raft_term()
         }).
 
 -opaque meta() :: #meta{}.
@@ -110,23 +106,13 @@ get_all_members(#meta{members = Members, changingMember = ChangingMember}) ->
 %% @doc Bump term.
 -spec bump_term(meta()) -> {ok, meta()}.
 bump_term(#meta{currentTerm = CurrentTerm} = Meta) ->
-  NewMeta = Meta#meta{ currentTerm = CurrentTerm + 1
-                     , votedFor    = ?undef
-                     },
+  NewMeta = Meta#meta{currentTerm = CurrentTerm + 1},
   {ok, NewMeta}.
-
--spec maybe_update_currentTerm(meta(), raft_term()) -> meta().
-maybe_update_currentTerm(#meta{currentTerm = CurrentTerm} = Meta, NewTerm) ->
-  Meta#meta{currentTerm = max(CurrentTerm, NewTerm)}.
 
 -spec update_currentTerm(meta(), raft_term()) -> meta().
 update_currentTerm(#meta{currentTerm = CurrentTerm} = Meta, NewTerm) ->
   true = (CurrentTerm < NewTerm),
   Meta#meta{currentTerm = NewTerm}.
-
--spec set_votedFor(meta(), raft_peer()) -> meta().
-set_votedFor(Meta, VotedFor) ->
-  Meta#meta{votedFor = VotedFor}.
 
 -spec get_myId(meta()) -> raft_peer().
 get_myId(#meta{myId = MyId}) -> MyId.
@@ -134,11 +120,12 @@ get_myId(#meta{myId = MyId}) -> MyId.
 -spec get_currentTerm(meta()) -> raft_term().
 get_currentTerm(#meta{currentTerm = Term}) -> Term.
 
--spec get_lastApplied(meta()) -> raft_tick().
-get_lastApplied(#meta{lastApplied = LastApplied}) -> LastApplied.
-
 -spec get_votedFor(meta()) -> ?undef | raft_peer().
-get_votedFor(#meta{votedFor = VotedFor}) -> VotedFor.
+get_votedFor(#meta{currentTerm = CurrentTerm, votedFor = VotedFor}) ->
+  case VotedFor of
+    {T, Peer} when T =:= CurrentTerm -> Peer;
+    _                                -> ?undef
+  end.
 
 -spec make_requestVoteRPC(meta(), raft_tick()) -> raft_requestVoteRPC().
 make_requestVoteRPC(#meta{} = Meta, LastTick) ->
@@ -166,6 +153,15 @@ maybe_grant_vote(FromPeer, ProposedTerm, PeerLastTick,
   {VoteGranted, NewRaftMeta}.
 
 %%%*_/ internal functions ======================================================
+
+-spec set_votedFor(meta(), raft_peer()) -> meta().
+set_votedFor(Meta, VotedFor) ->
+  CurrentTerm = get_currentTerm(Meta),
+  Meta#meta{votedFor = {CurrentTerm, VotedFor}}.
+
+-spec maybe_update_currentTerm(meta(), raft_term()) -> meta().
+maybe_update_currentTerm(#meta{currentTerm = CurrentTerm} = Meta, NewTerm) ->
+  Meta#meta{currentTerm = max(CurrentTerm, NewTerm)}.
 
 %% @private Return true if I should grant vote to a request.
 -spec is_grant_vote_to(raft_peer(), raft_term(), raft_tick(),

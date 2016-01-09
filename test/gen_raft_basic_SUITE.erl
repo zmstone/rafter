@@ -31,9 +31,11 @@ all() -> [F || {F, _A} <- module_info(exports),
         }).
 
 init([Name, Pid]) ->
-  {ok, #state{ name       = Name
-             , tester_pid = Pid
-             }}.
+  LastTick = undefined, %% empty state machine
+  State = #state{ name       = Name
+                , tester_pid = Pid
+                },
+  {ok, LastTick, State}.
 
 terminate(_Reason, _State) -> ok.
 

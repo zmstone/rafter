@@ -23,12 +23,12 @@ become(_InitArgs, #?state{ cb_mod   = CbMod
   Leader = #?leader{},
   ok = notify_peers(State),
   {ok, NewCbState} = CbMod:elected(CbState),
-  gen_raft:loop(State#?state{ cb_state   = NewCbState
-                            , raft_state = Leader
-                            }).
+  gen_raft:continue(State#?state{ cb_state   = NewCbState
+                                , raft_state = Leader
+                                }).
 
 handle_msg(_Msg, State) ->
-  gen_raft:loop(State).
+  gen_raft:continue(State).
 
 %%%*_/ internal functions ======================================================
 

@@ -49,7 +49,7 @@ handle_msg(?raft_electionTimeout(MsgRef),
   raft_candidate:become(CandidateInitArgs, NewState);
 handle_msg(?raft_requestVoteRPC(_, _, _) = RPC, State) ->
   {ok, NewState} = raft_utils:handle_requestVoteRPC(RPC, State),
-  gen_raft:loop(NewState).
+  gen_raft:continue(NewState).
 
 %%%*_/ internal functions ======================================================
 

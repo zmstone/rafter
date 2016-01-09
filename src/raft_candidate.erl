@@ -35,11 +35,13 @@ become(InitArgs, #?state{ raft_meta = RaftMeta
     #?candidate{ election_timeout = ElectionTimeout
                , election_timer   = TimerRef
                },
-  gen_raft:loop(State#?state{raft_state = RaftState}).
+  gen_raft:continue(State#?state{ raft_meta  = NewRaftMeta
+                                , raft_state = RaftState
+                                }).
 
 handle_msg(?raft_requestVoteRPC(_, _, _) = RPC, State) ->
   {ok, NewState} = raft_utils:handle_requestVoteRPC(RPC, State),
-  gen_raft:loop(NewState);
+  gen_raft:continue(NewState);
 handle_msg(?raft_requestVoteReply(FromPeer, VoteGranted, PeerTerm),
            #?state{ name      = Name
                   , raft_meta = RaftMeta
@@ -57,12 +59,12 @@ handle_msg(?raft_requestVoteReply(FromPeer, VoteGranted, PeerTerm),
       ?info("[~p:term=~w]: discarded stale requestVoteReply "
             "from=~p, result=~p, peer-term=~p\n",
             [Name, MyCurrentTerm, FromPeer, VoteGranted, PeerTerm]),
-       gen_raft:loop(State);
+       gen_raft:continue(State);
     MyCurrentTerm when MyCurrentTerm < PeerTerm ->
       ?info("[~p:term=~w]: higher term received from ~p, peer-term=~w\n",
             [Name, MyCurrentTerm, FromPeer, PeerTerm]),
       NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
-      gen_raft:loop(State#?state{raft_meta = NewRaftMeta})
+      gen_raft:continue(State#?state{raft_meta = NewRaftMeta})
   end.
 
 %%%*_/ internal functions ======================================================
@@ -81,10 +83,10 @@ handle_requestVoteReply(FromPeer, _VoteGramted = true,
   NewState = State#?state{raft_state = Candidate},
   case is_quorum(ReceivedVotes, RaftMeta) of
     true  -> become_leader(NewState);
-    false -> gen_raft:loop(NewState)
+    false -> gen_raft:continue(NewState)
   end;
 handle_requestVoteReply(_FromPeer, _VoteGranted = false, State) ->
-  gen_raft:loop(State).
+  gen_raft:continue(State).
 
 -spec is_quorum(raft_peers(), raft_meta()) -> boolean().
 is_quorum(ReceivedVotes, RaftMeta) ->
