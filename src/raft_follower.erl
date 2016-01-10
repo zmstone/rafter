@@ -49,7 +49,17 @@ handle_msg(self, #electionTimeout{ref = MsgRef},
   raft_candidate:become(CandidateInitArgs, NewState);
 handle_msg(From, #requestVoteRPC{} = RPC, State) ->
   {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
-  gen_raft:continue(NewState).
+  gen_raft:continue(NewState);
+handle_msg(From, #appendEntriesRPC{leaderTerm = LeaderTerm} = RPC,
+           #?state{raft_meta = RaftMeta} = State) ->
+  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
+  case MyCurrentTerm > LeaderTerm of
+    true ->
+      ok = send_appendEntriesReply(From, _Success = false, RaftMeta),
+      gen_raft:continue(State);
+    false ->
+      handle_appendEntriesRPC(From, RPC, State)
+  end.
 
 %%%*_/ internal functions ======================================================
 
@@ -63,4 +73,35 @@ connect_peer_nodes(Meta) ->
     fun(?raft_peer(Node, _Name)) ->
       _ = net_kernel:connect_node(Node)
     end, raft_meta:get_peer_members(Meta)).
+
+handle_appendEntriesRPC(From, RPC, State) ->
+  #appendEntriesRPC{ leaderTerm   = LeaderTerm
+                   , prevTick     = PrevTick
+                   , entries      = Entries
+                   , leaderCommit = CommitTick
+                   } = RPC,
+  #?state{ raft_logs = RaftLogs
+         , raft_meta = RaftMeta
+         } = State,
+  case raft_logs:maybe_append(RaftLogs, Entries, PrevTick, CommitTick) of
+    {ok, NewRaftLogs} ->
+      NewRaftMeta = raft_meta:maybe_update_currentTerm(RaftMeta, LeaderTerm),
+      NewState = State#?state{ raft_logs = NewRaftLogs
+                             , raft_meta = NewRaftMeta
+                             },
+      gen_raft:continue(NewState);
+    false ->
+      ok = send_appendEntriesReply(From, _Success = false, RaftMeta),
+      gen_raft:continue(State)
+  end.
+
+-spec send_appendEntriesReply(raft_peer(), boolean(), raft_meta()) -> ok.
+send_appendEntriesReply(From, Success, RaftMeta) ->
+  MyId = raft_meta:get_myId(RaftMeta),
+  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
+  Reply = #appendEntriesReply{ peerTerm = MyCurrentTerm
+                             , success  = Success
+                             },
+  raft_utils:cast(From, ?raft_msg(MyId, Reply)).
+
 

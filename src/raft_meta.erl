@@ -16,6 +16,7 @@
 
 -export([ bump_term/1
         , maybe_grant_vote/5
+        , maybe_update_currentTerm/2
         , update_currentTerm/2
         ]).
 
@@ -162,7 +163,10 @@ set_votedFor(Meta, VotedFor) ->
 
 -spec maybe_update_currentTerm(meta(), raft_term()) -> meta().
 maybe_update_currentTerm(#meta{currentTerm = CurrentTerm} = Meta, NewTerm) ->
-  Meta#meta{currentTerm = max(CurrentTerm, NewTerm)}.
+  case NewTerm > CurrentTerm of
+    true  -> update_currentTerm(Meta, NewTerm);
+    false -> Meta
+  end.
 
 %% @private Return true if I should grant vote to a request.
 -spec is_grant_vote_to(raft_peer(), raft_term(), raft_tick(),
