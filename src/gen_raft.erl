@@ -25,7 +25,6 @@
 
 -include("gen_raft_private.hrl").
 
--type cb_state() :: term().
 -type state() :: #?state{}.
 -define(raft_state_name(State), element(1, State#?state.raft_state)).
 

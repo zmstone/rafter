@@ -17,12 +17,16 @@
 
 -define(raft_tick(Term, Index), {Term, Index}).
 
+-type cb_op() :: term().
+-type cb_state() :: term().
+
 -type raft_term() :: non_neg_integer().
 -type raft_index() :: non_neg_integer().
 -type raft_tick() :: ?raft_tick(raft_term(), raft_index()).
--type timer_ref() :: {reference(), timer:tref()}.
+-type timer_ref() :: {MessageRef :: reference(), timer:tref()}.
 -type raft_meta() :: raft_meta:raft_meta().
 -type serialized_raft_meta() :: binary().
+-type raft_log() :: {raft_tick(), cb_op()}.
 -type raft_logs() :: raft_logs:logs().
 -type init_arg_name() :: metadata_dir
                        | election_timeout.
@@ -70,8 +74,29 @@
                           , peerTerm    :: raft_term()
                           }).
 
--type raft_msg_body() :: #requestVoteRPC{}
-                       | #requestVoteReply{}.
+-record(appendEntriesRPC, { leaderTerm   :: raft_term()
+                          , prevTick     :: raft_tick()
+                          , entries      :: [raft_log()]
+                          , leaderCommit :: raft_tick()
+                          }).
+
+-record(appendEntriesReply, { peerTerm :: raft_term()
+                            , success  :: boolean()
+                            }).
+
+-record(installSnapshotRPC, { leaderTerm      :: raft_term()
+                            , lastAppliedTick :: raft_tick()
+                            , stateMachine    :: cb_state()
+                            }).
+
+-record(installSnapshotReply, { peerTerm :: raft_term()
+                              }).
+
+-type raft_msg_body() :: #electionTimeout{}
+                       | #requestVoteRPC{}
+                       | #requestVoteReply{}
+                       | #appendEntriesRPC{}
+                       | #appendEntriesReply{}.
 
 -type raft_msg() :: ?raft_msg(raft_peer(), raft_msg_body()).
 
