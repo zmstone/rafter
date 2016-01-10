@@ -78,13 +78,10 @@ handle_requestVoteRPC(FromPeer,
   ok = send_requestVoteReply(FromPeer, VoteGranted, NewRaftMeta),
   {ok, NewState}.
 
-log(Level, #?state{name = Name, raft_state = RaftState}, Fmt, Args) ->
-  StateName = case is_tuple(RaftState) of
-                true  -> element(1, RaftState);
-                false -> unknown_state
-              end,
-  NewFmt = "gen_raft ~p ~p: " ++ Fmt,
-  NewArgs = [Name, StateName | Args],
+log(Level, State, Fmt, Args) ->
+  LogHeader = log_header(State),
+  NewFmt = "~s: " ++ Fmt,
+  NewArgs = [LogHeader | Args],
   case Level of
     info  -> error_logger:info_msg(NewFmt, NewArgs);
     warn  -> error_logger:warning_msg(NewFmt, NewArgs);
@@ -92,6 +89,21 @@ log(Level, #?state{name = Name, raft_state = RaftState}, Fmt, Args) ->
   end.
 
 %%%*_/ internal functions ======================================================
+
+-spec log_header(#?state{}) -> iodata().
+log_header(#?state{name = Name, raft_state = ?undef}) ->
+  io_lib:format("[~p]", [Name]);
+log_header(#?state{ name       = Name
+                  , raft_meta  = RaftMeta
+                  , raft_state = RaftState
+                  }) ->
+  StateName = case element(1, RaftState) of
+                raft_follower  -> follower;
+                raft_candidate -> candidate;
+                raft_leader    -> leader
+              end,
+  Term = raft_meta:get_currentTerm(RaftMeta),
+  io_lib:format("[~p term=~p state=~p]", [Name, Term, StateName]).
 
 %% @private start election timer.
 %% Return a tuple of reference and timer reference

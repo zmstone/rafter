@@ -22,6 +22,7 @@
 become(InitArgs, #?state{ raft_meta = RaftMeta
                         , raft_logs = RaftLogs
                         } = State) ->
+  loginfo(State, "becoming candidate", []),
   ElectionTimeout = getarg(election_timeout, InitArgs,
                            ?DEFAULT_ELECTION_TIMEOUT),
   {ok, NewRaftMeta} = raft_meta:bump_term(RaftMeta),
@@ -44,26 +45,23 @@ handle_msg(From, #requestVoteRPC{} = RPC, State) ->
   gen_raft:continue(NewState);
 handle_msg(From, #requestVoteReply{ voteGranted = VoteGranted
                                   , peerTerm    = PeerTerm},
-           #?state{ name      = Name
-                  , raft_meta = RaftMeta
-                  } = State) ->
+           #?state{raft_meta = RaftMeta} = State) ->
   case raft_meta:get_currentTerm(RaftMeta) of
     MyCurrentTerm when MyCurrentTerm =:= PeerTerm ->
       Result = case VoteGranted of
                   true  -> "granted";
                   false -> "denied"
                end,
-      ?info("[~p:term=~w]: vote ~s by ~w\n",
-            [Name, MyCurrentTerm, Result, From]),
+      loginfo(State, "vote ~s by ~w", [Result, From]),
       handle_requestVoteReply(From, VoteGranted, State);
     MyCurrentTerm when MyCurrentTerm > PeerTerm ->
-      ?info("[~p:term=~w]: discarded stale requestVoteReply "
-            "from=~p, result=~p, peer-term=~p\n",
-            [Name, MyCurrentTerm, From, VoteGranted, PeerTerm]),
+      loginfo(State, "discarded stale requestVoteReply "
+              "from=~p, result=~p, peer-term=~p",
+              [From, VoteGranted, PeerTerm]),
        gen_raft:continue(State);
     MyCurrentTerm when MyCurrentTerm < PeerTerm ->
-      ?info("[~p:term=~w]: higher term received from ~p, peer-term=~w\n",
-            [Name, MyCurrentTerm, From, PeerTerm]),
+      loginfo(State, "higher term received from ~p, peer-term=~w",
+              [From, PeerTerm]),
       NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
       gen_raft:continue(State#?state{raft_meta = NewRaftMeta})
   end.
@@ -110,4 +108,6 @@ become_leader(#?state{} = State) ->
   NewState = cleanup(State),
   LeaderInitArgs = [],
   raft_leader:become(LeaderInitArgs, NewState).
+
+loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
 

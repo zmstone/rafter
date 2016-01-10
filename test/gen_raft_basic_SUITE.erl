@@ -78,7 +78,7 @@ t_two_node_cluster(Config) when is_list(Config) ->
     after 2000 ->
       ct:faile(timeout)
     end,
-  %timer:sleep(2000),
+  timer:sleep(2000),
   case Leader of
     Pid1 -> ?assert(gen_raft:is_leader(Pid1));
     Pid2 -> ?assertNot(gen_raft:is_leader(Pid2))

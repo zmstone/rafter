@@ -45,8 +45,7 @@ handle_msg(self, #electionTimeout{ref = MsgRef},
   true = raft_meta:is_cluster_member(RaftMeta), %% assert
   CandidateInitArgs = [ {election_timeout, ElectionTimeout}
                       ],
-  NewState = State#?state{raft_state = ?undef},
-  raft_candidate:become(CandidateInitArgs, NewState);
+  raft_candidate:become(CandidateInitArgs, State);
 handle_msg(From, #requestVoteRPC{} = RPC, State) ->
   {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
   gen_raft:continue(NewState);
@@ -104,4 +103,5 @@ send_appendEntriesReply(From, Success, RaftMeta) ->
                              },
   raft_utils:cast(From, ?raft_msg(MyId, Reply)).
 
+%loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
 
