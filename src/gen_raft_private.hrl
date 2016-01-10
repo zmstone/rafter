@@ -52,39 +52,28 @@
 %% where N is by default ?DEFAULT_ELECTION_TIMEOUT
 -define(DEFAULT_ELECTION_TIMEOUT, 500).
 
--record(requestVoteRPC,
-        { fromPeer :: raft_peer()
-        , newTerm  :: raft_term()
-        , lastTick :: raft_tick()
-        }).
-
--record(requestVoteReply,
-        { fromPeer    :: raft_peer()
-        , voteGranted :: boolean()
-        , peerTerm    :: raft_term()
-        }).
-
 %% message tag macros
 -define(gen_raft_init(InitArgs), {'$gen_raft', {init, InitArgs}}).
 -define(gen_raft_cast(Msg), {'$gen_raft', {cast, Msg}}).
 -define(gen_raft_call(Ref, From, Call), {'$gen_raft', {call, Ref, From, Call}}).
 -define(gen_raft_reply(Ref, Result), {'$gen_raft', {reply, Ref, Result}}).
 
--define(raft_electionTimeout(MsgRef), {'$raft', {electionTimeout, MsgRef}}).
--define(raft_requestVoteRPC(FromWhichPeer, ProposedTerm, LastTick),
-        {'$raft', #requestVoteRPC{ fromPeer = FromWhichPeer
-                                 , newTerm  = ProposedTerm
-                                 , lastTick = LastTick
-                                 }}).
--define(raft_requestVoteReply(FromWhichPeer, VoteGranted, PeerTerm),
-        {'$raft', #requestVoteReply{ fromPeer    = FromWhichPeer
-                                   , voteGranted = VoteGranted
-                                   , peerTerm    = PeerTerm
-                                   }}).
+-define(raft_msg(FromPeer, Message), {'$raft', FromPeer, Message}).
 
--type raft_msg() :: {'$raft', term()}.
--type raft_requestVoteRPC() :: {'$raft', #requestVoteRPC{}}.
--type raft_requestVoteReply() :: {'$raft', #requestVoteReply{}}.
+-record(electionTimeout, {ref :: timer_ref()}).
+
+-record(requestVoteRPC, { newTerm  :: raft_term()
+                        , lastTick :: raft_tick()
+                        }).
+
+-record(requestVoteReply, { voteGranted :: boolean()
+                          , peerTerm    :: raft_term()
+                          }).
+
+-type raft_msg_body() :: #requestVoteRPC{}
+                       | #requestVoteReply{}.
+
+-type raft_msg() :: ?raft_msg(raft_peer(), raft_msg_body()).
 
 -define(info(FMT, ARGS), error_logger:info_msg(FMT, ARGS)).
 -define(warn(FMT, ARGS), error_logger:warning_msg(FMT, ARGS)).

@@ -1,7 +1,7 @@
 -module(raft_follower).
 
 -export([ init/2
-        , handle_msg/2
+        , handle_msg/3
         ]).
 
 -export_type([ follower/0
@@ -34,7 +34,7 @@ init(RaftMeta, InitArgs) ->
               },
   {ok, Follower}.
 
-handle_msg(?raft_electionTimeout(MsgRef),
+handle_msg(self, #electionTimeout{ref = MsgRef},
            #?state{ raft_meta  = RaftMeta
                   , raft_state = RaftState
                   } = State) ->
@@ -47,8 +47,8 @@ handle_msg(?raft_electionTimeout(MsgRef),
                       ],
   NewState = State#?state{raft_state = ?undef},
   raft_candidate:become(CandidateInitArgs, NewState);
-handle_msg(?raft_requestVoteRPC(_, _, _) = RPC, State) ->
-  {ok, NewState} = raft_utils:handle_requestVoteRPC(RPC, State),
+handle_msg(From, #requestVoteRPC{} = RPC, State) ->
+  {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
   gen_raft:continue(NewState).
 
 %%%*_/ internal functions ======================================================

@@ -1,7 +1,7 @@
 -module(raft_leader).
 
 -export([ become/2
-        , handle_msg/2
+        , handle_msg/3
         ]).
 
 -export_type([ leader/0
@@ -27,7 +27,7 @@ become(_InitArgs, #?state{ cb_mod   = CbMod
                                 , raft_state = Leader
                                 }).
 
-handle_msg(_Msg, State) ->
+handle_msg(_From, _Msg, State) ->
   gen_raft:continue(State).
 
 %%%*_/ internal functions ======================================================

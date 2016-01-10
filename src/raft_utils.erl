@@ -2,9 +2,10 @@
 
 -export([ cancel_election_timer/1
         , cast/2
-        , handle_requestVoteRPC/2
+        , handle_requestVoteRPC/3
         , maybe_start_election_timer/2
         , multi_cast/2
+        , log/4
         ]).
 
 -include("gen_raft_private.hrl").
@@ -38,7 +39,7 @@ cancel_election_timer({MsgRef, Tref}) ->
   _ = timer:cancel(Tref),
   %% flush message
   receive
-    ?raft_electionTimeout(MsgRef) ->
+    ?raft_msg(self, #electionTimeout{ref = MsgRef}) ->
       ok
   after 0 ->
     ok
@@ -62,7 +63,10 @@ multi_cast(Peers, Msg) ->
                 ordsets:to_list(Peers)).
 
 %% @doc Handle requestVoteRPC, update raft meta, send reply.
-handle_requestVoteRPC(?raft_requestVoteRPC(FromPeer, ProposedTerm, LastTick),
+handle_requestVoteRPC(FromPeer,
+                      #requestVoteRPC{ newTerm  = ProposedTerm
+                                     , lastTick = LastTick
+                                     },
                       #?state{ raft_meta = RaftMeta
                              , raft_logs = RaftLogs
                              } = State) ->
@@ -74,6 +78,19 @@ handle_requestVoteRPC(?raft_requestVoteRPC(FromPeer, ProposedTerm, LastTick),
   ok = send_requestVoteReply(FromPeer, VoteGranted, NewRaftMeta),
   {ok, NewState}.
 
+log(Level, #?state{name = Name, raft_state = RaftState}, Fmt, Args) ->
+  StateName = case is_tuple(RaftState) of
+                true  -> element(1, RaftState);
+                false -> unknown_state
+              end,
+  NewFmt = "gen_raft ~p ~p: " ++ Fmt,
+  NewArgs = [Name, StateName | Args],
+  case Level of
+    info  -> error_logger:info_msg(NewFmt, NewArgs);
+    warn  -> error_logger:warning_msg(NewFmt, NewArgs);
+    error -> error_logger:error_msg(NewFmt, NewArgs)
+  end.
+
 %%%*_/ internal functions ======================================================
 
 %% @private start election timer.
@@ -83,7 +100,8 @@ handle_requestVoteRPC(?raft_requestVoteRPC(FromPeer, ProposedTerm, LastTick),
 start_election_timer(BaseTime) ->
   Timeout = randomised_election_timeout(BaseTime),
   MsgRef = make_ref(),
-  Tref = timer:send_after(Timeout, ?raft_electionTimeout(MsgRef)),
+  Msg = ?raft_msg(self, #electionTimeout{ref = MsgRef}),
+  Tref = timer:send_after(Timeout, Msg),
   {MsgRef, Tref}.
 
 %% @private Get randomised election timeout value.
@@ -104,7 +122,9 @@ do_cast(Dst, Msg) ->
 send_requestVoteReply(ReplyToPeer, VoteGranted, RaftMeta) ->
   MyId = raft_meta:get_myId(RaftMeta),
   MyTerm = raft_meta:get_currentTerm(RaftMeta),
-  Reply = ?raft_requestVoteReply(MyId, VoteGranted, MyTerm),
+  Reply = ?raft_msg(MyId, #requestVoteReply{ voteGranted = VoteGranted
+                                           , peerTerm    = MyTerm
+                                           }),
   ok = cast(ReplyToPeer, Reply).
 
 

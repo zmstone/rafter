@@ -127,11 +127,12 @@ get_votedFor(#meta{currentTerm = CurrentTerm, votedFor = VotedFor}) ->
     _                                -> ?undef
   end.
 
--spec make_requestVoteRPC(meta(), raft_tick()) -> raft_requestVoteRPC().
+-spec make_requestVoteRPC(meta(), raft_tick()) -> raft_msg().
 make_requestVoteRPC(#meta{} = Meta, LastTick) ->
-  ?raft_requestVoteRPC(_FromPeer = get_myId(Meta),
-                       _NewTerm  = get_currentTerm(Meta),
-                       _LastTick = LastTick).
+  Msg = #requestVoteRPC{ newTerm  = get_currentTerm(Meta)
+                       , lastTick = LastTick
+                       },
+  ?raft_msg(_FromPeer = get_myId(Meta), Msg).
 
 %% @doc Maybe or maybe not grant vote to a requestVoteRPC.
 -spec maybe_grant_vote(FromPeer     :: raft_peer(),

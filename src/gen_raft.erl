@@ -73,7 +73,7 @@ create_node(MetadataDir, ?raft_peer(_, Name) = MyId, Peers) ->
   {ok, RaftMeta} = raft_meta:create(MyId, ordsets:from_list([MyId | Peers])),
   Filename = filename:join(MetadataDir, metadata_filename(Name)),
   case file:read_file_info(Filename) of
-    {ok, _}         -> ?warn("overwritting ~s\n", [Filename]);
+    {ok, _}         -> ?warn("~p overwritting ~s\n", [Name, Filename]);
     {error, enoent} -> ok
   end,
   {ok, IoData} = raft_meta:serialize(RaftMeta),
@@ -177,17 +177,20 @@ put_raft_meta(NewMeta, #?state{raft_meta = OldMeta} = State0) ->
 
 handle_msg({'$gen_raft', _} = Msg, State) ->
   handle_gen_raft_msg(Msg, State);
-handle_msg({'$raft', _} = Msg, State)
- when ?raft_state_name(State) =:= raft_follower ->
-  raft_follower:handle_msg(Msg, State);
-handle_msg({'$raft', _} = Msg, State)
- when ?raft_state_name(State) =:= raft_candidate ->
-  raft_candidate:handle_msg(Msg, State);
-handle_msg({'$raft', _} = Msg, State)
- when ?raft_state_name(State) =:= raft_leader ->
-  raft_leader:handle_msg(Msg, State);
-handle_msg(Msg, #?state{name = Name} = State) ->
-  ?error("~p ~p: discarded unknown msg: ~p\n", [?MODULE, Name, Msg]),
+handle_msg({'$raft', FromPeer, Msg}, #?state{raft_meta = RaftMeta} = State) ->
+  RaftState = ?raft_state_name(State),
+  case is_from_valid_peer(FromPeer, Msg, RaftState, RaftMeta) of
+    true ->
+      case RaftState of
+        raft_follower  -> raft_follower:handle_msg(FromPeer, Msg, State);
+        raft_candidate -> raft_candidate:handle_msg(FromPeer, Msg, State);
+        raft_leader    -> raft_leader:handle_msg(FromPeer, Msg, State)
+      end;
+    false ->
+      logerror(State, "message from invalid peer ~p", [FromPeer])
+  end;
+handle_msg(Msg, #?state{} = State) ->
+  logerror(State, "discarded unknown msg: ~p\n", [Msg]),
   ?MODULE:loop(State).
 
 -spec handle_gen_raft_msg(term(), #?state{}) -> no_return().
@@ -219,23 +222,22 @@ handle_gen_raft_msg(?gen_raft_call(Ref, From, Call), State) ->
   ok = raft_utils:cast(From, Reply),
   ?MODULE:loop(NewState).
 
-terminate(Reason, #?state{ name     = Name
-                         , cb_mod   = CbMod
+terminate(Reason, #?state{ cb_mod   = CbMod
                          , cb_state = CbState
                          , debug    = Debug
-                         }) ->
+                         } = State) ->
   try
     _ = CbMod:terminate(Reason, CbState)
   catch C : E ->
-    ?error("gen_raft ~p bad terminate: ~p:~p\n~p",
-           [CbMod, C, E, erlang:get_stacktrace()])
+    logerror(State, "bad callback termination: ~p:~p\n~p",
+             [C, E, erlang:get_stacktrace()])
   end,
   case is_error_termination(Reason) of
     true  ->
       sys:print_log(Debug),
-      ?error("gen_raft ~p terminated\nreason: ~p\n", [Name, Reason]);
+      logerror(State, "terminated\nreason: ~p\n", [Reason]);
     false ->
-      ?info("gen_raft ~p terminated, reason: ~p\n", [Name, Reason])
+      loginfo(State, "terminated\nreason: ~p\n", [Reason])
   end,
   exit(Reason).
 
@@ -281,7 +283,7 @@ open_metadata_fd(Name, InitArgs) ->
   Filename = filename:join(Dir, metadata_filename(Name)),
   case file:read_file_info(Filename) of
     {ok, _FileInfo} ->
-      ?info("using metadata file ~s from ~s\n", [Filename, Which]),
+      ?info("~p using metadata file ~s from ~s\n", [Name, Filename, Which]),
       do_open_metadata_fd(Filename);
     {error, Reason} ->
       erlang:error({Filename, Reason})
@@ -350,3 +352,9 @@ cast_priv(Name_or_Pid, Msg) ->
   GenRaftMsg = ?gen_raft_cast(Msg),
   ok = raft_utils:cast(Name_or_Pid, GenRaftMsg).
 
+loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
+logerror(State, Fmt, Args) -> raft_utils:log(error, State, Fmt, Args).
+
+is_from_valid_peer(_FromPeer, _Msg, _RaftState, _RaftMeta) ->
+  %% TODO check state and config
+  true.

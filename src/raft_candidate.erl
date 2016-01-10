@@ -1,7 +1,7 @@
 -module(raft_candidate).
 
 -export([ become/2
-        , handle_msg/2
+        , handle_msg/3
         ]).
 
 -export_type([ candidate/0
@@ -39,10 +39,11 @@ become(InitArgs, #?state{ raft_meta = RaftMeta
                                 , raft_state = RaftState
                                 }).
 
-handle_msg(?raft_requestVoteRPC(_, _, _) = RPC, State) ->
-  {ok, NewState} = raft_utils:handle_requestVoteRPC(RPC, State),
+handle_msg(From, #requestVoteRPC{} = RPC, State) ->
+  {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
   gen_raft:continue(NewState);
-handle_msg(?raft_requestVoteReply(FromPeer, VoteGranted, PeerTerm),
+handle_msg(From, #requestVoteReply{ voteGranted = VoteGranted
+                                  , peerTerm    = PeerTerm},
            #?state{ name      = Name
                   , raft_meta = RaftMeta
                   } = State) ->
@@ -53,16 +54,16 @@ handle_msg(?raft_requestVoteReply(FromPeer, VoteGranted, PeerTerm),
                   false -> "denied"
                end,
       ?info("[~p:term=~w]: vote ~s by ~w\n",
-            [Name, MyCurrentTerm, Result, FromPeer]),
-      handle_requestVoteReply(FromPeer, VoteGranted, State);
+            [Name, MyCurrentTerm, Result, From]),
+      handle_requestVoteReply(From, VoteGranted, State);
     MyCurrentTerm when MyCurrentTerm > PeerTerm ->
       ?info("[~p:term=~w]: discarded stale requestVoteReply "
             "from=~p, result=~p, peer-term=~p\n",
-            [Name, MyCurrentTerm, FromPeer, VoteGranted, PeerTerm]),
+            [Name, MyCurrentTerm, From, VoteGranted, PeerTerm]),
        gen_raft:continue(State);
     MyCurrentTerm when MyCurrentTerm < PeerTerm ->
       ?info("[~p:term=~w]: higher term received from ~p, peer-term=~w\n",
-            [Name, MyCurrentTerm, FromPeer, PeerTerm]),
+            [Name, MyCurrentTerm, From, PeerTerm]),
       NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
       gen_raft:continue(State#?state{raft_meta = NewRaftMeta})
   end.
