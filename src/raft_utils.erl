@@ -10,7 +10,6 @@
 
 -include("gen_raft_private.hrl").
 
-
 %%%*_/ APIs ====================================================================
 
 %% @doc Start election timer only if I am a cluster member.
@@ -47,14 +46,11 @@ cancel_election_timer({MsgRef, Tref}) ->
 
 %% @doc Send a message to (maybe remote) peer. Ignore exception if any.
 -spec cast(pid() | raft_peer(), term()) -> ok.
-cast(?raft_peer(Node, Name), Msg) ->
-  Dst = case Node =:= node() of
-          true  -> Name;
-          false -> {Name, Node}
-        end,
-  do_cast(Dst, Msg);
-cast(Pid, Msg) when is_pid(Pid) ->
-  do_cast(Pid, Msg).
+cast(Dst, Msg) ->
+  try erlang:send(Dst, Msg)
+  catch _ : _ -> ok
+  end,
+  ok.
 
 %% @doc Send a message to (maybe remote) peers. Ignore exceptions if any.
 -spec multi_cast(raft_peers(), raft_msg()) -> ok.
@@ -78,9 +74,10 @@ handle_requestVoteRPC(FromPeer,
   ok = send_requestVoteReply(FromPeer, VoteGranted, NewRaftMeta),
   {ok, NewState}.
 
+%% @doc Wrapper around error_logger.
 log(Level, State, Fmt, Args) ->
   LogHeader = log_header(State),
-  NewFmt = "~s: " ++ Fmt,
+  NewFmt = "~s " ++ Fmt,
   NewArgs = [LogHeader | Args],
   case Level of
     info  -> error_logger:info_msg(NewFmt, NewArgs);
@@ -113,7 +110,7 @@ start_election_timer(BaseTime) ->
   Timeout = randomised_election_timeout(BaseTime),
   MsgRef = make_ref(),
   Msg = ?raft_msg(self, #electionTimeout{ref = MsgRef}),
-  Tref = timer:send_after(Timeout, Msg),
+  {ok, Tref} = timer:send_after(Timeout, Msg),
   {MsgRef, Tref}.
 
 %% @private Get randomised election timeout value.
@@ -121,13 +118,6 @@ start_election_timer(BaseTime) ->
 -spec randomised_election_timeout(timer:time()) -> timer:time().
 randomised_election_timeout(BaseTime) ->
   random:uniform(BaseTime) + BaseTime.
-
--spec do_cast(pid() | raft_name() | {raft_name(), node()}, term()) -> ok.
-do_cast(Dst, Msg) ->
-  try erlang:send(Dst, Msg)
-  catch _ : _ -> ok
-  end,
-  ok.
 
 %% @private Reply requestVoteRPC.
 -spec send_requestVoteReply(raft_peer(), boolean(), raft_meta()) -> ok.
@@ -139,4 +129,18 @@ send_requestVoteReply(ReplyToPeer, VoteGranted, RaftMeta) ->
                                            }),
   ok = cast(ReplyToPeer, Reply).
 
+%%%*_/ tests ===================================================================
 
+-include_lib("eunit/include/eunit.hrl").
+-ifdef(TEST).
+
+election_timer_test() ->
+  Ref = start_election_timer(100),
+  ok = cancel_election_timer(Ref),
+  receive
+    Msg -> throw(Msg)
+  after 200 ->
+    ok
+  end.
+
+-endif.

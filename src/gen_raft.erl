@@ -68,7 +68,7 @@ stop(Pid) when is_pid(Pid) ->
   end.
 
 -spec create_node(filename:name_all(), raft_peer(), [raft_peer()]) -> ok.
-create_node(MetadataDir, ?raft_peer(_, Name) = MyId, Peers) ->
+create_node(MetadataDir, ?raft_peer(Name, _Node) = MyId, Peers) ->
   {ok, RaftMeta} = raft_meta:create(MyId, ordsets:from_list([MyId | Peers])),
   Filename = filename:join(MetadataDir, metadata_filename(Name)),
   case file:read_file_info(Filename) of
@@ -189,7 +189,7 @@ handle_msg({'$raft', FromPeer, Msg}, #?state{raft_meta = RaftMeta} = State) ->
       logerror(State, "message from invalid peer ~p", [FromPeer])
   end;
 handle_msg(Msg, #?state{} = State) ->
-  logerror(State, "discarded unknown msg: ~p\n", [Msg]),
+  logerror(State, "discarded unknown msg:\n~p", [Msg]),
   ?MODULE:loop(State).
 
 -spec handle_gen_raft_msg(term(), #?state{}) -> no_return().

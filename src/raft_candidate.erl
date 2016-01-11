@@ -101,8 +101,7 @@ cancel_election_timer(#?state{raft_state = Candidate} = State) ->
   State#?state{raft_state = NewCandidate}.
 
 cleanup(State) ->
-  NewState = cancel_election_timer(State),
-  NewState#?state{raft_state = ?undef}.
+  cancel_election_timer(State).
 
 become_leader(#?state{} = State) ->
   NewState = cleanup(State),

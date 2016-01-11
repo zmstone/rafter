@@ -4,9 +4,9 @@
 -define(undef, undefined).
 
 %% The unique id of raft peers
--define(raft_peer(Node, Name), {Node, Name}).
+-define(raft_peer(Name, Node), {Name, Node}).
 -type raft_name() :: atom().
--type raft_peer() :: ?raft_peer(Node :: atom(), Name :: raft_name()).
+-type raft_peer() :: ?raft_peer(Name :: raft_name(), Node :: atom()).
 -type raft_peers() :: ordsets:ordset(raft_peer()).
 
 -define(is_raft_peer(ID),
@@ -92,11 +92,14 @@
 -record(installSnapshotReply, { peerTerm :: raft_term()
                               }).
 
+-record(leaderDown, {reason :: term()}).
+
 -type raft_msg_body() :: #electionTimeout{}
                        | #requestVoteRPC{}
                        | #requestVoteReply{}
                        | #appendEntriesRPC{}
-                       | #appendEntriesReply{}.
+                       | #appendEntriesReply{}
+                       | #leaderDown{}.
 
 -type raft_msg() :: ?raft_msg(raft_peer(), raft_msg_body()).
 

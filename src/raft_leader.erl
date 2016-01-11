@@ -22,6 +22,7 @@
 become(_InitArgs, #?state{ cb_mod   = CbMod
                          , cb_state = CbState
                          } = State) ->
+  loginfo(State, "becoming leader", []),
   Leader = #?leader{},
   NewState = State#?state{raft_state = Leader},
   ok = notify_peers(NewState),
@@ -65,3 +66,4 @@ get_peerTick(Peer, PeerTicks) ->
     none          -> ?undef
   end.
 
+loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).

@@ -47,8 +47,8 @@ elected(#state{tester_pid = Pid} = State) ->
 
 t_one_node_cluster(Config) when is_list(Config) ->
   {ok, Dir} = file:get_cwd(),
-  Name = node1,
-  MyId = {node(), Name},
+  Name = member1,
+  MyId = {Name, node()},
   ok = gen_raft:create_node(Dir, MyId, []),
   RaftInitArgs = [ {metadata_dir, Dir} ],
   {ok, Pid} = start_gen_raft(Name, RaftInitArgs),
@@ -64,13 +64,13 @@ t_one_node_cluster(Config) when is_list(Config) ->
 
 t_two_node_cluster(Config) when is_list(Config) ->
   {ok, Dir} = file:get_cwd(),
-  Node1 = {node(), node1},
-  Node2 = {node(), node2},
-  ok = gen_raft:create_node(Dir, Node1, [Node2]),
-  ok = gen_raft:create_node(Dir, Node2, [Node1]),
+  Member1 = {member1, node()},
+  Member2 = {member2, node()},
+  ok = gen_raft:create_node(Dir, Member1, [Member2]),
+  ok = gen_raft:create_node(Dir, Member2, [Member1]),
   RaftInitArgs = [ {metadata_dir, Dir} ],
-  {ok, Pid1} = start_gen_raft(node1, RaftInitArgs),
-  {ok, Pid2} = start_gen_raft(node2, RaftInitArgs),
+  {ok, Pid1} = start_gen_raft(member1, RaftInitArgs),
+  {ok, Pid2} = start_gen_raft(member2, RaftInitArgs),
   Leader =
     receive
       {elected, Pid} ->
@@ -79,18 +79,20 @@ t_two_node_cluster(Config) when is_list(Config) ->
       ct:faile(timeout)
     end,
   timer:sleep(2000),
-  case Leader of
-    Pid1 -> ?assert(gen_raft:is_leader(Pid1));
-    Pid2 -> ?assertNot(gen_raft:is_leader(Pid2))
-  end,
+  {Leader, Follower} = case Leader of
+                          Pid1 -> {Pid1, Pid2};
+                          Pid2 -> {Pid2, Pid1}
+                       end,
+  ?assert(gen_raft:is_leader(Leader)),
+  ?assertNot(gen_raft:is_leader(Follower)),
   ok = gen_raft:stop(Pid1),
   ok = gen_raft:stop(Pid2),
   ok.
 
 t_three_node_cluster(Config) when is_list(Config) ->
   {ok, Dir} = file:get_cwd(),
-  Names = [node1, node2, node3],
-  Ids = [{node(), Name} || Name <- Names],
+  Names = [member1, member2, member3],
+  Ids = [{Name, node()} || Name <- Names],
   lists:foreach(
     fun(Id) ->
       ok = gen_raft:create_node(Dir, Id, Ids)
@@ -109,9 +111,11 @@ t_three_node_cluster(Config) when is_list(Config) ->
     after 2000 ->
       ct:faile(timeout)
     end,
-  %timer:sleep(2000),
+  timer:sleep(2000),
   ?assert(lists:member(Leader, Pids)),
   ?assert(gen_raft:is_leader(Leader)),
+  ?assert(lists:all(fun(Pid) -> not gen_raft:is_leader(Pid) end,
+                    lists:delete(Leader, Pids))),
   lists:foreach(fun(Pid) -> gen_raft:stop(Pid) end, Pids),
   ok.
 

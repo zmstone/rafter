@@ -79,9 +79,9 @@ deserialize(MyName, Binary) ->
                         Value
                      end, Fields),
   Meta = list_to_tuple([meta | Values]),
-  #meta{myId = ?raft_peer(Node, Name)} = Meta,
-  Node =:= node() orelse erlang:error({bad_metadata, node, Node, node()}),
+  #meta{myId = ?raft_peer(Name, Node)} = Meta,
   Name =:= MyName orelse erlang:error({bad_metadata, name, Name, MyName}),
+  Node =:= node() orelse erlang:error({bad_metadata, node, Node, node()}),
   {ok, Meta}.
 
 %% @doc Get all peer members.

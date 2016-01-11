@@ -14,6 +14,8 @@
 -record(?follower,
         { election_timeout :: timer:time()
         , election_timer   :: ?undef | timer_ref()
+        , leader_peer      :: ?undef | raft_peer()
+        , leader_mpid      :: ?undef | pid()
         }).
 
 -opaque follower() :: #?follower{}.
@@ -35,12 +37,16 @@ init(RaftMeta, InitArgs) ->
   {ok, Follower}.
 
 handle_msg(self, #electionTimeout{ref = MsgRef},
-           #?state{ raft_meta  = RaftMeta
-                  , raft_state = RaftState
+           #?state{ raft_meta   = RaftMeta
+                  , raft_state  = Follower
                   } = State) ->
   #?follower{ election_timeout = ElectionTimeout
             , election_timer   = TimerRef
-            } = RaftState,
+            , leader_peer      = LeaderPeer
+            , leader_mpid      = LeaderMpid
+            } = Follower,
+  ?undef = LeaderPeer, %% assert
+  ?undef = LeaderMpid, %% assert
   {MsgRef, _Tref} = TimerRef, %% assert
   true = raft_meta:is_cluster_member(RaftMeta), %% assert
   CandidateInitArgs = [ {election_timeout, ElectionTimeout}
@@ -69,7 +75,7 @@ getarg(Name, Args, Default) ->
 -spec connect_peer_nodes(raft_meta()) -> ok.
 connect_peer_nodes(Meta) ->
   lists:foreach(
-    fun(?raft_peer(Node, _Name)) ->
+    fun(?raft_peer(_Name, Node)) ->
       _ = net_kernel:connect_node(Node)
     end, raft_meta:get_peer_members(Meta)).
 
@@ -79,14 +85,22 @@ handle_appendEntriesRPC(From, RPC, State) ->
                    , entries      = Entries
                    , leaderCommit = CommitTick
                    } = RPC,
-  #?state{ raft_logs = RaftLogs
-         , raft_meta = RaftMeta
+  #?state{ raft_logs  = RaftLogs
+         , raft_meta  = RaftMeta
+         , raft_state = Follower
          } = State,
   case raft_logs:maybe_append(RaftLogs, Entries, PrevTick, CommitTick) of
     {ok, NewRaftLogs} ->
       NewRaftMeta = raft_meta:maybe_update_currentTerm(RaftMeta, LeaderTerm),
-      NewState = State#?state{ raft_logs = NewRaftLogs
-                             , raft_meta = NewRaftMeta
+      #?follower{election_timer = Timer} = Follower,
+      ok = raft_utils:cancel_election_timer(Timer),
+      Follower1 = Follower#?follower{ election_timer = ?undef
+                                    , leader_peer    = From
+                                    },
+      NewFollower = monitor_leader(Follower1),
+      NewState = State#?state{ raft_logs  = NewRaftLogs
+                             , raft_meta  = NewRaftMeta
+                             , raft_state = NewFollower
                              },
       gen_raft:continue(NewState);
     false ->
@@ -104,4 +118,32 @@ send_appendEntriesReply(From, Success, RaftMeta) ->
   raft_utils:cast(From, ?raft_msg(MyId, Reply)).
 
 %loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
+
+-spec monitor_leader(follower()) -> follower().
+monitor_leader(#?follower{leader_peer = Leader} = Follower0) ->
+  Follower = demonitor_leader(Follower0),
+  Follower#?follower{leader_mpid = do_monitor_leader(Leader)}.
+
+-spec demonitor_leader(follower()) -> follower().
+demonitor_leader(#?follower{leader_mpid = ?undef} = Follower) -> Follower;
+demonitor_leader(#?follower{leader_mpid = Pid} = Follower) ->
+  _ = unlink(Pid),
+  _ = exit(Pid, kill),
+  Follower#?follower{leader_mpid = ?undef}.
+
+-spec do_monitor_leader(?undef | raft_peer()) -> ?undef | pid().
+do_monitor_leader(?undef) -> ?undef;
+do_monitor_leader(?raft_peer(Name, Node) = Leader) ->
+  Parent = self(),
+  erlang:spawn_link(
+    fun() ->
+      Ref = erlang:monitor(process, {Name, Node}),
+      receive
+        {'DOWN', Ref, process, _, Reason} ->
+          %% make a message as if sent from leader
+          unlink(Parent),
+          Parent ! ?raft_msg(Leader, #leaderDown{reason = Reason})
+      end
+    end).
+
 
