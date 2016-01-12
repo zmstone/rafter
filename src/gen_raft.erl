@@ -72,7 +72,7 @@ create_node(MetadataDir, ?raft_peer(Name, _Node) = MyId, Peers) ->
   {ok, RaftMeta} = raft_meta:create(MyId, ordsets:from_list([MyId | Peers])),
   Filename = filename:join(MetadataDir, metadata_filename(Name)),
   case file:read_file_info(Filename) of
-    {ok, _}         -> ?warn("~p overwritting ~s\n", [Name, Filename]);
+    {ok, _}         -> ?warn("~p overwritting ~s", [Name, Filename]);
     {error, enoent} -> ok
   end,
   {ok, IoData} = raft_meta:serialize(RaftMeta),
@@ -234,9 +234,9 @@ terminate(Reason, #?state{ cb_mod   = CbMod
   case is_error_termination(Reason) of
     true  ->
       sys:print_log(Debug),
-      logerror(State, "terminated\nreason: ~p\n", [Reason]);
+      logerror(State, "terminated. reason: ~p", [Reason]);
     false ->
-      loginfo(State, "terminated\nreason: ~p\n", [Reason])
+      loginfo(State, "terminated. reason: ~p", [Reason])
   end,
   exit(Reason).
 
@@ -282,7 +282,7 @@ open_metadata_fd(Name, InitArgs) ->
   Filename = filename:join(Dir, metadata_filename(Name)),
   case file:read_file_info(Filename) of
     {ok, _FileInfo} ->
-      ?info("~p using metadata file ~s from ~s\n", [Name, Filename, Which]),
+      ?info("~p using metadata file ~s from ~s", [Name, Filename, Which]),
       do_open_metadata_fd(Filename);
     {error, Reason} ->
       erlang:error({Filename, Reason})

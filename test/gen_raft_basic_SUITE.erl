@@ -13,7 +13,9 @@ init_per_suite(Config) -> Config.
 
 end_per_suite(_Config) -> ok.
 
-init_per_testcase(_Case, Config) -> Config.
+init_per_testcase(Case, Config) ->
+  error_logger:info_msg("\n============= ~p ============\n", [Case]),
+  Config.
 
 end_per_testcase(_Case, Config) -> Config.
 
@@ -45,9 +47,9 @@ elected(#state{tester_pid = Pid} = State) ->
 
 %%%_* Test functions ===========================================================
 
-t_one_node_cluster(Config) when is_list(Config) ->
+t_1_node_cluster(Config) when is_list(Config) ->
   {ok, Dir} = file:get_cwd(),
-  Name = member1,
+  Name = peer1,
   MyId = {Name, node()},
   ok = gen_raft:create_node(Dir, MyId, []),
   RaftInitArgs = [ {metadata_dir, Dir} ],
@@ -62,15 +64,15 @@ t_one_node_cluster(Config) when is_list(Config) ->
   ok = gen_raft:stop(Pid),
   ok.
 
-t_two_node_cluster(Config) when is_list(Config) ->
+t_2_node_cluster(Config) when is_list(Config) ->
   {ok, Dir} = file:get_cwd(),
-  Member1 = {member1, node()},
-  Member2 = {member2, node()},
-  ok = gen_raft:create_node(Dir, Member1, [Member2]),
-  ok = gen_raft:create_node(Dir, Member2, [Member1]),
+  Peer1 = {peer1, node()},
+  Peer2 = {peer2, node()},
+  ok = gen_raft:create_node(Dir, Peer1, [Peer2]),
+  ok = gen_raft:create_node(Dir, Peer2, [Peer1]),
   RaftInitArgs = [ {metadata_dir, Dir} ],
-  {ok, Pid1} = start_gen_raft(member1, RaftInitArgs),
-  {ok, Pid2} = start_gen_raft(member2, RaftInitArgs),
+  {ok, Pid1} = start_gen_raft(peer1, RaftInitArgs),
+  {ok, Pid2} = start_gen_raft(peer2, RaftInitArgs),
   Leader =
     receive
       {elected, Pid} ->
@@ -86,12 +88,22 @@ t_two_node_cluster(Config) when is_list(Config) ->
   ?assert(gen_raft:is_leader(Leader)),
   ?assertNot(gen_raft:is_leader(Follower)),
   ok = gen_raft:stop(Pid1),
+  timer:sleep(100),
   ok = gen_raft:stop(Pid2),
   ok.
 
-t_three_node_cluster(Config) when is_list(Config) ->
+t_3_node_cluster(Config) when is_list(Config) ->
+  x_node_cluster(3).
+
+t_x_node_cluster(Config) when is_list(Config) ->
+  _ = random:seed(os:timestamp()),
+  X = random:uniform(32),
+  x_node_cluster(X).
+
+x_node_cluster(X) ->
   {ok, Dir} = file:get_cwd(),
-  Names = [member1, member2, member3],
+  NameF = fun(I) -> "p" ++ lists:flatten(io_lib:format("~.2.0w", [I])) end,
+  Names = [list_to_atom(NameF(I)) || I <- lists:seq(1, X)],
   Ids = [{Name, node()} || Name <- Names],
   lists:foreach(
     fun(Id) ->
@@ -111,12 +123,16 @@ t_three_node_cluster(Config) when is_list(Config) ->
     after 2000 ->
       ct:faile(timeout)
     end,
-  timer:sleep(2000),
+  timer:sleep(5000),
   ?assert(lists:member(Leader, Pids)),
   ?assert(gen_raft:is_leader(Leader)),
   ?assert(lists:all(fun(Pid) -> not gen_raft:is_leader(Pid) end,
                     lists:delete(Leader, Pids))),
-  lists:foreach(fun(Pid) -> gen_raft:stop(Pid) end, Pids),
+  lists:foreach(
+    fun(Pid) ->
+      gen_raft:stop(Pid),
+      timer:sleep(100)
+    end, Pids),
   ok.
 
 %%%_* Help functions ===========================================================

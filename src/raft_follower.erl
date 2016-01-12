@@ -37,8 +37,8 @@ init(RaftMeta, InitArgs) ->
   {ok, Follower}.
 
 handle_msg(self, #electionTimeout{ref = MsgRef},
-           #?state{ raft_meta   = RaftMeta
-                  , raft_state  = Follower
+           #?state{ raft_meta  = RaftMeta
+                  , raft_state = Follower
                   } = State) ->
   #?follower{ election_timeout = ElectionTimeout
             , election_timer   = TimerRef
@@ -141,8 +141,9 @@ do_monitor_leader(?raft_peer(Name, Node) = Leader) ->
       receive
         {'DOWN', Ref, process, _, Reason} ->
           %% make a message as if sent from leader
+          Parent ! ?raft_msg(Leader, #leaderDown{reason = Reason}),
           unlink(Parent),
-          Parent ! ?raft_msg(Leader, #leaderDown{reason = Reason})
+          exit(normal)
       end
     end).
 
