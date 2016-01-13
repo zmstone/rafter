@@ -19,26 +19,12 @@
 
 -opaque candidate() :: #?candidate{}.
 
-become(InitArgs, #?state{ raft_meta = RaftMeta
-                        , raft_logs = RaftLogs
-                        } = State) ->
+become(InitArgs, #?state{} = State) ->
   loginfo(State, "becoming candidate", []),
   ElectionTimeout = getarg(election_timeout, InitArgs,
                            ?DEFAULT_ELECTION_TIMEOUT),
-  {ok, NewRaftMeta} = raft_meta:bump_term(RaftMeta),
-  %% send to all peers including myself, %% TODO, maybe skip self?
-  Peers = raft_meta:get_all_members(NewRaftMeta),
-  LastTick = raft_logs:get_lastTick(RaftLogs),
-  Request = raft_meta:make_requestVoteRPC(NewRaftMeta, LastTick),
-  ok = raft_utils:multi_cast(Peers, Request),
-  TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
-  RaftState =
-    #?candidate{ election_timeout = ElectionTimeout
-               , election_timer   = TimerRef
-               },
-  gen_raft:continue(State#?state{ raft_meta  = NewRaftMeta
-                                , raft_state = RaftState
-                                }).
+  Candidate = #?candidate{election_timeout = ElectionTimeout},
+  start_new_term_election(State#?state{raft_state = Candidate}).
 
 handle_msg(From, #requestVoteRPC{} = RPC, State) ->
   {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
@@ -64,9 +50,36 @@ handle_msg(From, #requestVoteReply{ voteGranted = VoteGranted
               [From, PeerTerm]),
       NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
       gen_raft:continue(State#?state{raft_meta = NewRaftMeta})
-  end.
+  end;
+handle_msg(slef, #electionTimeout{ref = MsgRef},
+           #?state{raft_state = Candidate0} = State) ->
+  #?candidate{election_timer = TimerRef} = Candidate0,
+  {MsgRef, _Tref} = TimerRef, %% assert
+  Candidate = Candidate0#?candidate{ election_timer = ?undef
+                                   , received_votes = []
+                                   },
+  start_new_term_election(State#?state{raft_state = Candidate}).
 
 %%%*_/ internal functions ======================================================
+
+start_new_term_election(#?state{ raft_meta  = RaftMeta
+                               , raft_logs  = RaftLogs
+                               , raft_state = Candidate0
+                               } = State) ->
+  #?candidate{ election_timeout = ElectionTimeout
+             , election_timer   = ?undef %% assert
+             } = Candidate0,
+  {ok, NewRaftMeta} = raft_meta:bump_term(RaftMeta),
+  %% send to all peers including myself
+  Peers = raft_meta:get_all_members(NewRaftMeta),
+  LastTick = raft_logs:get_lastTick(RaftLogs),
+  Request = raft_meta:make_requestVoteRPC(NewRaftMeta, LastTick),
+  ok = raft_utils:multi_cast(Peers, Request),
+  TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
+  Candidate = Candidate0#?candidate{election_timer = TimerRef},
+  gen_raft:continue(State#?state{ raft_meta  = NewRaftMeta
+                                , raft_state = Candidate
+                                }).
 
 getarg(Name, Args, Default) ->
   proplists:get_value(Name, Args, Default).
