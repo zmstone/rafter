@@ -29,12 +29,8 @@ init(RaftMeta, InitArgs) ->
   ElectionTimeout = getarg(election_timeout, InitArgs,
                            ?DEFAULT_ELECTION_TIMEOUT),
   ok = connect_peer_nodes(RaftMeta),
-  TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
-  Follower =
-    #?follower{ election_timeout = ElectionTimeout
-              , election_timer   = TimerRef
-              },
-  {ok, Follower}.
+  Follower = #?follower{election_timeout = ElectionTimeout},
+  maybe_start_election_timer(RaftMeta, Follower).
 
 handle_msg(self, #electionTimeout{ref = MsgRef},
            #?state{ raft_meta  = RaftMeta
@@ -64,6 +60,21 @@ handle_msg(From, #appendEntriesRPC{leaderTerm = LeaderTerm} = RPC,
       gen_raft:continue(State);
     false ->
       handle_appendEntriesRPC(From, RPC, State)
+  end;
+handle_msg(self, #leaderDown{leaderPeer = LeaderPeer, reason = _Reason},
+           #?state{raft_meta = RaftMeta, raft_state = Follower} = State) ->
+  %% leaderDown is a loopback message sent from Follower#?follower.leader_mpid
+  %% when the messages reaches here, the leader might have been changed already
+  %% simply ignore the leaderDown message if that's the case
+  case LeaderPeer =:= Follower#?follower.leader_peer of
+    true  ->
+      {ok, Follower1} = maybe_start_election_timer(RaftMeta, Follower),
+      NewFollower = Follower1#?follower{ leader_peer = ?undef
+                                       , leader_mpid = ?undef
+                                       },
+      gen_raft:continue(State#?state{raft_state = NewFollower});
+    false ->
+      gen_raft:continue(State)
   end.
 
 %%%*_/ internal functions ======================================================
@@ -141,10 +152,21 @@ do_monitor_leader(?raft_peer(Name, Node) = Leader) ->
       receive
         {'DOWN', Ref, process, _, Reason} ->
           %% make a message as if sent from leader
-          Parent ! ?raft_msg(Leader, #leaderDown{reason = Reason}),
+          Msg = #leaderDown{ leaderPeer = Leader
+                           , reason     = Reason
+                           },
+          Parent ! ?raft_msg(_From = self, Msg),
+          %% unlink to avoid spaming Parent with 'EXIT' message
+          %% in case it is traping exit
           unlink(Parent),
           exit(normal)
       end
     end).
 
-
+-spec maybe_start_election_timer(raft_meta(), follower()) -> {ok, follower()}.
+maybe_start_election_timer(RaftMeta, Follower) ->
+  #?follower{ election_timeout = ElectionTimeout
+            , election_timer   = ?undef %% assert
+            } = Follower,
+  TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
+  {ok, Follower#?follower{election_timer = TimerRef}}.

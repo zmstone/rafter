@@ -92,7 +92,9 @@
 -record(installSnapshotReply, { peerTerm :: raft_term()
                               }).
 
--record(leaderDown, {reason :: term()}).
+-record(leaderDown, { leaderPeer :: raft_peer()
+                    , reason     :: term()
+                    }).
 
 -type raft_msg_body() :: #electionTimeout{}
                        | #requestVoteRPC{}

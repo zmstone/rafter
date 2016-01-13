@@ -131,7 +131,7 @@ x_node_cluster(X) ->
   lists:foreach(
     fun(Pid) ->
       gen_raft:stop(Pid),
-      timer:sleep(100)
+      timer:sleep(random:uniform(2000))
     end, Pids),
   ok.
 
