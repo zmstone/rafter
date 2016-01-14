@@ -1,6 +1,6 @@
 -module(raft_candidate).
 
--export([ become/2
+-export([ become/1
         , handle_msg/3
         ]).
 
@@ -12,19 +12,15 @@
 -define(candidate, ?MODULE).
 
 -record(?candidate,
-        { election_timeout    :: timer:time()
-        , election_timer      :: ?undef | timer_ref()
+        { election_timer      :: ?undef | timer_ref()
         , received_votes = [] :: raft_peers()
         }).
 
 -opaque candidate() :: #?candidate{}.
 
-become(InitArgs, #?state{} = State) ->
+become(#?state{} = State) ->
   loginfo(State, "becoming candidate", []),
-  ElectionTimeout = getarg(election_timeout, InitArgs,
-                           ?DEFAULT_ELECTION_TIMEOUT),
-  Candidate = #?candidate{election_timeout = ElectionTimeout},
-  start_new_term_election(State#?state{raft_state = Candidate}).
+  start_new_term_election(State#?state{raft_state = #?candidate{}}).
 
 handle_msg(From, #requestVoteRPC{} = RPC, State) ->
   {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
@@ -66,23 +62,19 @@ start_new_term_election(#?state{ raft_meta  = RaftMeta
                                , raft_logs  = RaftLogs
                                , raft_state = Candidate0
                                } = State) ->
-  #?candidate{ election_timeout = ElectionTimeout
-             , election_timer   = ?undef %% assert
-             } = Candidate0,
+  #?candidate{election_timer = ?undef} = Candidate0, %% assert
   {ok, NewRaftMeta} = raft_meta:bump_term(RaftMeta),
   %% send to all peers including myself
   Peers = raft_meta:get_all_members(NewRaftMeta),
   LastTick = raft_logs:get_lastTick(RaftLogs),
   Request = raft_meta:make_requestVoteRPC(NewRaftMeta, LastTick),
   ok = raft_utils:multi_cast(Peers, Request),
+  ElectionTimeout = raft_utils:get_election_timeout(State),
   TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
   Candidate = Candidate0#?candidate{election_timer = TimerRef},
   gen_raft:continue(State#?state{ raft_meta  = NewRaftMeta
                                 , raft_state = Candidate
                                 }).
-
-getarg(Name, Args, Default) ->
-  proplists:get_value(Name, Args, Default).
 
 -spec handle_requestVoteReply(raft_peer(), boolean(), #?state{}) -> no_return().
 handle_requestVoteReply(FromPeer, _VoteGramted = true,
@@ -122,4 +114,5 @@ become_leader(#?state{} = State) ->
   raft_leader:become(LeaderInitArgs, NewState).
 
 loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
+
 

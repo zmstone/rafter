@@ -38,11 +38,16 @@
                     | raft_candidate:candidate()
                     | raft_leader:leader().
 
+%% election timout randomised from N to 2*N
+%% where N is by default ?DEFAULT_ELECTION_TIMEOUT
+-define(DEFAULT_ELECTION_TIMEOUT, 500).
+
 -record(gen_raft_state,
         { name       :: atom()
         , parent     :: pid()
         , cb_mod     :: module()
         , cb_state   :: term()
+        , init_args  :: raft_init_args()
         , meta_fd    :: file:fd()
         , raft_meta  :: raft_meta()
         , raft_logs  :: raft_logs()
@@ -51,10 +56,6 @@
         }).
 
 -define(state, gen_raft_state).
-
-%% election timout randomised from N to 2*N
-%% where N is by default ?DEFAULT_ELECTION_TIMEOUT
--define(DEFAULT_ELECTION_TIMEOUT, 500).
 
 %% message tag macros
 -define(gen_raft_init(InitArgs), {'$gen_raft', {init, InitArgs}}).

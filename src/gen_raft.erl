@@ -97,6 +97,7 @@ init_it(Starter, Parent, {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts) ->
                      , name       = Name
                      , cb_mod     = CbMod
                      , cb_state   = CbState
+                     , init_args  = InitArgs
                      , raft_state = ?undef
                      , raft_logs  = RaftLogs
                      , debug      = proplists:get_value(debug, Opts, [])

@@ -12,8 +12,7 @@
 -define(follower, ?MODULE).
 
 -record(?follower,
-        { election_timeout :: timer:time()
-        , election_timer   :: ?undef | timer_ref()
+        { election_timer   :: ?undef | timer_ref()
         , leader_peer      :: ?undef | raft_peer()
         , leader_mpid      :: ?undef | pid()
         }).
@@ -26,18 +25,15 @@ init(MetadataBin, InitArgs) when is_binary(MetadataBin) ->
   {ok, RaftMeta} = raft_meta:deserialize(Name, MetadataBin),
   init(RaftMeta, InitArgs);
 init(RaftMeta, InitArgs) ->
-  ElectionTimeout = getarg(election_timeout, InitArgs,
-                           ?DEFAULT_ELECTION_TIMEOUT),
+  ElectionTimeout = raft_utils:get_election_timeout(InitArgs),
   ok = connect_peer_nodes(RaftMeta),
-  Follower = #?follower{election_timeout = ElectionTimeout},
-  maybe_start_election_timer(RaftMeta, Follower).
+  maybe_start_election_timer(ElectionTimeout, RaftMeta, #?follower{}).
 
 handle_msg(self, #electionTimeout{ref = MsgRef},
            #?state{ raft_meta  = RaftMeta
                   , raft_state = Follower
                   } = State) ->
-  #?follower{ election_timeout = ElectionTimeout
-            , election_timer   = TimerRef
+  #?follower{ election_timer   = TimerRef
             , leader_peer      = LeaderPeer
             , leader_mpid      = LeaderMpid
             } = Follower,
@@ -45,9 +41,7 @@ handle_msg(self, #electionTimeout{ref = MsgRef},
   ?undef = LeaderMpid, %% assert
   {MsgRef, _Tref} = TimerRef, %% assert
   true = raft_meta:is_cluster_member(RaftMeta), %% assert
-  CandidateInitArgs = [ {election_timeout, ElectionTimeout}
-                      ],
-  raft_candidate:become(CandidateInitArgs, State);
+  raft_candidate:become(State);
 handle_msg(From, #requestVoteRPC{} = RPC, State) ->
   {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
   gen_raft:continue(NewState);
@@ -68,7 +62,9 @@ handle_msg(self, #leaderDown{leaderPeer = LeaderPeer, reason = _Reason},
   %% simply ignore the leaderDown message if that's the case
   case LeaderPeer =:= Follower#?follower.leader_peer of
     true  ->
-      {ok, Follower1} = maybe_start_election_timer(RaftMeta, Follower),
+      ElectionTimeout = raft_utils:get_election_timeout(State),
+      {ok, Follower1} =
+        maybe_start_election_timer(ElectionTimeout, RaftMeta, Follower),
       NewFollower = Follower1#?follower{ leader_peer = ?undef
                                        , leader_mpid = ?undef
                                        },
@@ -78,9 +74,6 @@ handle_msg(self, #leaderDown{leaderPeer = LeaderPeer, reason = _Reason},
   end.
 
 %%%*_/ internal functions ======================================================
-
-getarg(Name, Args, Default) ->
-  proplists:get_value(Name, Args, Default).
 
 %% @private Establish connection to all peer erlang nodes.
 -spec connect_peer_nodes(raft_meta()) -> ok.
@@ -163,10 +156,10 @@ do_monitor_leader(?raft_peer(Name, Node) = Leader) ->
       end
     end).
 
--spec maybe_start_election_timer(raft_meta(), follower()) -> {ok, follower()}.
-maybe_start_election_timer(RaftMeta, Follower) ->
-  #?follower{ election_timeout = ElectionTimeout
-            , election_timer   = ?undef %% assert
-            } = Follower,
+-spec maybe_start_election_timer(timer:time(), raft_meta(), follower()) ->
+        {ok, follower()}.
+maybe_start_election_timer(ElectionTimeout, RaftMeta, Follower) ->
+  #?follower{election_timer = ?undef} = Follower, %% assert
   TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
   {ok, Follower#?follower{election_timer = TimerRef}}.
+

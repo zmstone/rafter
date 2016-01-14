@@ -2,6 +2,7 @@
 
 -export([ cancel_election_timer/1
         , cast/2
+        , get_election_timeout/1
         , handle_requestVoteRPC/3
         , maybe_start_election_timer/2
         , multi_cast/2
@@ -84,6 +85,12 @@ log(Level, State, Fmt, Args) ->
     warn  -> error_logger:warning_msg(NewFmt, NewArgs);
     error -> error_logger:error_msg(NewFmt, NewArgs)
   end.
+
+-spec get_election_timeout(#?state{} | raft_init_args()) -> timer:time().
+get_election_timeout(#?state{init_args = InitArgs}) ->
+  get_election_timeout(InitArgs);
+get_election_timeout(InitArgs) when is_list(InitArgs) ->
+  proplists:get_value(election_timeout, InitArgs, ?DEFAULT_ELECTION_TIMEOUT).
 
 %%%*_/ internal functions ======================================================
 
