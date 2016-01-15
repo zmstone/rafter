@@ -2,6 +2,7 @@
 
 %% public APIs
 -export([ create_node/3
+        , get_raft_state_name/1
         , is_leader/1
         , start/5
         , start_link/5
@@ -81,7 +82,12 @@ create_node(MetadataDir, ?raft_peer(Name, _Node) = MyId, Peers) ->
 %% @doc Return true if the process is in leader state.
 -spec is_leader(raft_name() | pid()) -> boolean().
 is_leader(Name_or_Pid) ->
-  call_priv(Name_or_Pid, is_leader).
+  raft_leader =:= get_raft_state_name(Name_or_Pid).
+
+%% @doc Return the current raft state name the given Name or Pid is in.
+-spec get_raft_state_name(raft_name() | pid()) -> raft_state_name().
+get_raft_state_name(Name_or_Pid) ->
+  call_priv(Name_or_Pid, get_raft_state_name).
 
 %%%*_/ Private APIs ============================================================
 
@@ -248,8 +254,8 @@ is_error_termination(_)             -> true.
 
 -spec handle_gen_raft_call(Call :: term(), state()) ->
         {Result :: term(), state()}.
-handle_gen_raft_call(is_leader, State) ->
-  Result = (raft_leader =:= ?raft_state_name(State)),
+handle_gen_raft_call(get_raft_state_name, State) ->
+  Result = ?raft_state_name(State),
   {Result, State}.
 
 handle_gen_raft_cast(stop, State) ->

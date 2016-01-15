@@ -121,12 +121,10 @@ get_myId(#meta{myId = MyId}) -> MyId.
 -spec get_currentTerm(meta()) -> raft_term().
 get_currentTerm(#meta{currentTerm = Term}) -> Term.
 
+%% @doc Return for which peer I have voted in the current term.
 -spec get_votedFor(meta()) -> ?undef | raft_peer().
-get_votedFor(#meta{currentTerm = CurrentTerm, votedFor = VotedFor}) ->
-  case VotedFor of
-    {T, Peer} when T =:= CurrentTerm -> Peer;
-    _                                -> ?undef
-  end.
+get_votedFor(#meta{currentTerm = CurrentTerm} = Meta) ->
+  get_votedFor(Meta, CurrentTerm).
 
 -spec make_requestVoteRPC(meta(), raft_tick()) -> raft_msg().
 make_requestVoteRPC(#meta{} = Meta, LastTick) ->
@@ -178,7 +176,7 @@ is_grant_vote_to(FromPeer, ProposedTerm,
     true  ->
       false;
     false ->
-      VotedFor = get_votedFor(RaftMeta),
+      VotedFor = get_votedFor(RaftMeta, ProposedTerm),
       %% if we have not voted for someone else
       case VotedFor =:= ?undef orelse VotedFor =:= FromPeer of
         true  ->
@@ -188,4 +186,18 @@ is_grant_vote_to(FromPeer, ProposedTerm,
           false
       end
   end.
+
+%% @private Return for which peer I have voted in the given term.
+%% Asserting that the given term is either the current term I know of,
+%% or a 'future' term to me.
+%% @end
+-spec get_votedFor(meta(), raft_term()) -> ?undef | raft_peer().
+get_votedFor(#meta{votedFor = ?undef}, _WhichTerm) -> ?undef;
+get_votedFor(#meta{votedFor = {Term, Peer}}, WhichTerm) ->
+  true = (WhichTerm >= Term), %% assert, because I do not keep the history
+  case Term =:= WhichTerm of
+    true  -> Peer;
+    false -> ?undef
+  end.
+
 

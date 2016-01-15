@@ -5,6 +5,8 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 
+-define(max_no_leader_emerge_tolerance_seconds, 10).
+
 %%%_* ct callbacks =============================================================
 
 suite() -> [{timetrap, {seconds, 30}}].
@@ -78,7 +80,7 @@ t_2_node_cluster(Config) when is_list(Config) ->
       {elected, Pid} ->
         Pid
     after 2000 ->
-      ct:faile(timeout)
+      ct:fail(timeout)
     end,
   timer:sleep(2000),
   {Leader, Follower} = case Leader of
@@ -116,24 +118,7 @@ x_node_cluster(X) ->
         {ok, Pid} = start_gen_raft(Name, RaftInitArgs),
         Pid
       end, Names),
-  Leader =
-    receive
-      {elected, Pid} ->
-        Pid
-    after 2000 ->
-      ct:faile(timeout)
-    end,
-  timer:sleep(5000),
-  ?assert(lists:member(Leader, Pids)),
-  ?assert(gen_raft:is_leader(Leader)),
-  ?assert(lists:all(fun(Pid) -> not gen_raft:is_leader(Pid) end,
-                    lists:delete(Leader, Pids))),
-  lists:foreach(
-    fun(Pid) ->
-      gen_raft:stop(Pid),
-      timer:sleep(random:uniform(2000))
-    end, Pids),
-  ok.
+  shutdown_cluster(Pids, _Quorum = (X div 2) + 1).
 
 %%%_* Help functions ===========================================================
 
@@ -142,4 +127,50 @@ start_gen_raft(Name, RaftInitArgs) ->
                       _CbMod = ?MODULE,
                       _CbArgs = [Name, self()],
                       _Options = []).
+
+shutdown_cluster(Pids, Quorum) when length(Pids) < Quorum ->
+  ok = assert_no_leader(Pids, 5000),
+  lists:foreach(fun(Pid) -> gen_raft:stop(Pid) end, Pids);
+shutdown_cluster(Pids, Quorum) ->
+  LeaderPid = wait_for_leader(Pids),
+  ok = gen_raft:stop(LeaderPid),
+  shutdown_cluster(lists:delete(LeaderPid, Pids), Quorum).
+
+assert_no_leader(Pids, Timeout) ->
+  try
+    Pid = wait_for_leader(Pids, Timeout),
+    ct:fail("leader emerged when not supposed to, pid=~p", [Pid])
+  catch throw : timeout ->
+    ok
+  end.
+
+wait_for_leader(Pids) ->
+  MaxTimeToWait = timer:seconds(?max_no_leader_emerge_tolerance_seconds),
+  wait_for_leader(Pids, MaxTimeToWait).
+
+wait_for_leader(Pids, MaxTimeToWait) ->
+  receive
+    {elected, Pid} ->
+      assert_cluster_member_roles(Pid, Pids),
+      ok = gen_raft:stop(Pid),
+      Pid
+  after MaxTimeToWait ->
+    throw(timeout)
+  end.
+
+assert_cluster_member_roles(Leader, Pids) ->
+  ?assert(lists:member(Leader, Pids)),
+  Followers = lists:delete(Leader, Pids),
+  lists:foreach(fun(Pid) -> assert_follower(Pid) end, Followers),
+  ok.
+
+assert_follower(Pid) ->
+  ?assertNot(gen_raft:is_leader(Pid)),
+  case gen_raft:get_raft_state_name(Pid) of
+    raft_follower ->
+      ok;
+    raft_candidate ->
+      timer:sleep(100),
+      ?assertEqual(raft_follower, gen_raft:get_raft_state_name(Pid))
+  end.
 

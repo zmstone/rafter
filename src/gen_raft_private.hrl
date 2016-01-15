@@ -8,6 +8,7 @@
 -type raft_name() :: atom().
 -type raft_peer() :: ?raft_peer(Name :: raft_name(), Node :: atom()).
 -type raft_peers() :: ordsets:ordset(raft_peer()).
+-type raft_state_name() :: raft_follower | raft_candidate | raft_leader.
 
 -define(is_raft_peer(ID),
         (is_tuple(ID)            andalso

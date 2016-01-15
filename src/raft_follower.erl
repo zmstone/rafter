@@ -107,6 +107,7 @@ handle_appendEntriesRPC(From, RPC, State) ->
          } = State,
   case raft_logs:maybe_append(RaftLogs, Entries, PrevTick, CommitTick) of
     {ok, NewRaftLogs} ->
+      ok = maybe_log_leader_emerge(State, From, LeaderTerm),
       NewRaftMeta = raft_meta:maybe_update_currentTerm(RaftMeta, LeaderTerm),
       #?follower{election_timer = Timer} = Follower,
       ok = raft_utils:cancel_election_timer(Timer),
@@ -123,7 +124,6 @@ handle_appendEntriesRPC(From, RPC, State) ->
       ok = raft_utils:send_appendEntriesReply(From, _Success = false, RaftMeta),
       gen_raft:continue(State)
   end.
-
 
 loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
 
@@ -166,4 +166,14 @@ maybe_start_election_timer(ElectionTimeout, RaftMeta, Follower) ->
   #?follower{election_timer = ?undef} = Follower, %% assert
   TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
   {ok, Follower#?follower{election_timer = TimerRef}}.
+
+maybe_log_leader_emerge(State, Leader, Term) ->
+  #?follower{leader_peer = CurrentLeader} = State#?state.raft_state,
+  case CurrentLeader =:= Leader of
+    true ->
+      ok;
+    false ->
+      loginfo(State, "leader emerged, leader_peer=~w leader_term=~w",
+              [Leader, Term])
+  end.
 

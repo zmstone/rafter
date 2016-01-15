@@ -38,11 +38,11 @@ handle_msg(From, #requestVoteReply{ voteGranted = VoteGranted
       handle_requestVoteReply(From, VoteGranted, State);
     MyCurrentTerm when MyCurrentTerm > PeerTerm ->
       loginfo(State, "discarded stale requestVoteReply "
-              "from=~p, result=~p, peer-term=~p",
+              "from=~w, result=~w, peer-term=~w",
               [From, VoteGranted, PeerTerm]),
        gen_raft:continue(State);
     MyCurrentTerm when MyCurrentTerm < PeerTerm ->
-      loginfo(State, "higher term received from ~p, peer-term=~w",
+      loginfo(State, "higher term received from ~w, peer-term=~w",
               [From, PeerTerm]),
       NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
       gen_raft:continue(State#?state{raft_meta = NewRaftMeta})
