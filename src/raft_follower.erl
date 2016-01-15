@@ -1,6 +1,7 @@
 -module(raft_follower).
 
 -export([ init/2
+        , become/3
         , handle_msg/3
         ]).
 
@@ -29,6 +30,17 @@ init(RaftMeta, InitArgs) ->
   ok = connect_peer_nodes(RaftMeta),
   maybe_start_election_timer(ElectionTimeout, RaftMeta, #?follower{}).
 
+%% becoming follower from candidate or leader state.
+become(#?state{ init_args = InitArgs
+              , raft_meta = RaftMeta
+              } = State, From, Msg) ->
+  loginfo(State, "becoming follower", []),
+  ElectionTimeout = raft_utils:get_election_timeout(InitArgs),
+  {ok, Follower} =
+    maybe_start_election_timer(ElectionTimeout, RaftMeta, #?follower{}),
+  NewState = State#?state{raft_state = Follower},
+  handle_msg(From, Msg, NewState).
+
 handle_msg(self, #electionTimeout{ref = MsgRef},
            #?state{ raft_meta  = RaftMeta
                   , raft_state = Follower
@@ -50,7 +62,7 @@ handle_msg(From, #appendEntriesRPC{leaderTerm = LeaderTerm} = RPC,
   MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
   case MyCurrentTerm > LeaderTerm of
     true ->
-      ok = send_appendEntriesReply(From, _Success = false, RaftMeta),
+      ok = raft_utils:send_appendEntriesReply(From, _Success = false, RaftMeta),
       gen_raft:continue(State);
     false ->
       handle_appendEntriesRPC(From, RPC, State)
@@ -108,20 +120,12 @@ handle_appendEntriesRPC(From, RPC, State) ->
                              },
       gen_raft:continue(NewState);
     false ->
-      ok = send_appendEntriesReply(From, _Success = false, RaftMeta),
+      ok = raft_utils:send_appendEntriesReply(From, _Success = false, RaftMeta),
       gen_raft:continue(State)
   end.
 
--spec send_appendEntriesReply(raft_peer(), boolean(), raft_meta()) -> ok.
-send_appendEntriesReply(From, Success, RaftMeta) ->
-  MyId = raft_meta:get_myId(RaftMeta),
-  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
-  Reply = #appendEntriesReply{ peerTerm = MyCurrentTerm
-                             , success  = Success
-                             },
-  raft_utils:cast(From, ?raft_msg(MyId, Reply)).
 
-%loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
+loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
 
 -spec monitor_leader(follower()) -> follower().
 monitor_leader(#?follower{leader_peer = Leader} = Follower0) ->

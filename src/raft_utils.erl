@@ -4,9 +4,10 @@
         , cast/2
         , get_election_timeout/1
         , handle_requestVoteRPC/3
+        , log/4
         , maybe_start_election_timer/2
         , multi_cast/2
-        , log/4
+        , send_appendEntriesReply/3
         ]).
 
 -include("gen_raft_private.hrl").
@@ -92,6 +93,15 @@ get_election_timeout(#?state{init_args = InitArgs}) ->
 get_election_timeout(InitArgs) when is_list(InitArgs) ->
   proplists:get_value(election_timeout, InitArgs, ?DEFAULT_ELECTION_TIMEOUT).
 
+
+-spec send_appendEntriesReply(raft_peer(), boolean(), raft_meta()) -> ok.
+send_appendEntriesReply(From, Success, RaftMeta) ->
+  MyId = raft_meta:get_myId(RaftMeta),
+  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
+  Reply = #appendEntriesReply{ peerTerm = MyCurrentTerm
+                             , success  = Success
+                             },
+  raft_utils:cast(From, ?raft_msg(MyId, Reply)).
 %%%*_/ internal functions ======================================================
 
 -spec log_header(#?state{}) -> iodata().

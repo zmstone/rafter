@@ -47,14 +47,24 @@ handle_msg(From, #requestVoteReply{ voteGranted = VoteGranted
       NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
       gen_raft:continue(State#?state{raft_meta = NewRaftMeta})
   end;
-handle_msg(slef, #electionTimeout{ref = MsgRef},
+handle_msg(self, #electionTimeout{ref = MsgRef},
            #?state{raft_state = Candidate0} = State) ->
   #?candidate{election_timer = TimerRef} = Candidate0,
   {MsgRef, _Tref} = TimerRef, %% assert
   Candidate = Candidate0#?candidate{ election_timer = ?undef
                                    , received_votes = []
                                    },
-  start_new_term_election(State#?state{raft_state = Candidate}).
+  start_new_term_election(State#?state{raft_state = Candidate});
+handle_msg(From, #appendEntriesRPC{leaderTerm = LeaderTerm} = RPC,
+           #?state{raft_meta = RaftMeta} = State) ->
+  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
+  case MyCurrentTerm > LeaderTerm of
+    true ->
+      ok = raft_utils:send_appendEntriesReply(From, _Success = false, RaftMeta),
+      gen_raft:continue(State);
+    false ->
+      raft_follower:become(cleanup(State), From, RPC)
+  end.
 
 %%%*_/ internal functions ======================================================
 
