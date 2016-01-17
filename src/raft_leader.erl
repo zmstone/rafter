@@ -29,10 +29,52 @@ become(_InitArgs, #?state{ cb_mod   = CbMod
   {ok, NewCbState} = CbMod:elected(CbState),
   gen_raft:continue(NewState#?state{cb_state = NewCbState}).
 
-handle_msg(_From, _Msg, State) ->
-  gen_raft:continue(State).
+handle_msg(From, #requestVoteRPC{newTerm = NewTerm} = RPC,
+           #?state{raft_meta = RaftMeta} = State) ->
+  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
+  case NewTerm > MyCurrentTerm of
+    true ->
+      log_stepdown(State, From, requestVoteRPC, NewTerm),
+      {ok, NewState} = stepdown(State),
+      raft_follower:become(NewState, From, RPC);
+    false ->
+      ok = raft_utils:send_requestVoteReply(From, false, RaftMeta),
+      gen_raft:continue(State)
+  end;
+handle_msg(From, #requestVoteReply{peerTerm = PeerTerm}, State) ->
+  ContinueFun = fun() -> gen_raft:continue(State) end,
+  maybe_stepdown(State, From, requestVoteReply, PeerTerm, ContinueFun);
+handle_msg(From, #appendEntriesReply{ peerTerm = PeerTerm
+                                    , success  = IsSuccess
+                                    }, State) ->
+  ContinueFun = case IsSuccess of
+                  true  -> fun() -> gen_raft:continue(State) end;
+                  false -> fun() -> install_snapshot(From, State) end
+                end,
+  maybe_stepdown(State, From, appendEntriesReply, PeerTerm, ContinueFun).
 
 %%%*_/ internal functions ======================================================
+
+install_snapshot(_From, State) ->
+  %% TODO
+  gen_raft:continue(State).
+
+maybe_stepdown(#?state{raft_meta = RaftMeta} = State,
+               From, MessageName, PeerTerm, ContinueFun) ->
+  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
+  case PeerTerm > MyCurrentTerm of
+    true ->
+      log_stepdown(State, From, MessageName, PeerTerm),
+      NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
+      {ok, NewState} = stepdown(State#?state{raft_meta = NewRaftMeta}),
+      raft_follower:become(NewState);
+    false ->
+      ContinueFun()
+  end.
+
+stepdown(#?state{cb_mod = CbMod, cb_state = CbState} = State) ->
+  {ok, NewCbState} = CbMod:stepdown(CbState),
+  {ok, State#?state{cb_state = NewCbState}}.
 
 notify_peers(#?state{ raft_meta  = RaftMeta
                     , raft_logs  = RaftLogs
@@ -66,4 +108,9 @@ get_peerTick(Peer, PeerTicks) ->
     none          -> ?undef
   end.
 
+log_stepdown(State, From, MessageName, PeerTerm) ->
+  loginfo(State, "higher term (~w) received from ~w in ~p, stepping down.",
+          [PeerTerm, From, MessageName]).
+
 loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
+

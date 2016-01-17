@@ -23,7 +23,8 @@ become(#?state{} = State) ->
   start_new_term_election(State#?state{raft_state = #?candidate{}}).
 
 handle_msg(From, #requestVoteRPC{} = RPC, State) ->
-  {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
+  {ok, _VoteGranted, NewState} =
+    raft_utils:handle_requestVoteRPC(From, RPC, State),
   gen_raft:continue(NewState);
 handle_msg(From, #requestVoteReply{ voteGranted = VoteGranted
                                   , peerTerm    = PeerTerm},
@@ -37,12 +38,9 @@ handle_msg(From, #requestVoteReply{ voteGranted = VoteGranted
       loginfo(State, "vote ~s by ~w", [Result, From]),
       handle_requestVoteReply(From, VoteGranted, State);
     MyCurrentTerm when MyCurrentTerm > PeerTerm ->
-      loginfo(State, "discarded stale requestVoteReply "
-              "from=~w, result=~w, peer-term=~w",
-              [From, VoteGranted, PeerTerm]),
        gen_raft:continue(State);
     MyCurrentTerm when MyCurrentTerm < PeerTerm ->
-      loginfo(State, "higher term received from ~w, peer-term=~w",
+      loginfo(State, "higher term received from ~w peer_term=~w",
               [From, PeerTerm]),
       NewRaftMeta = raft_meta:update_currentTerm(RaftMeta, PeerTerm),
       gen_raft:continue(State#?state{raft_meta = NewRaftMeta})
@@ -124,5 +122,4 @@ become_leader(#?state{} = State) ->
   raft_leader:become(LeaderInitArgs, NewState).
 
 loginfo(State, Fmt, Args) -> raft_utils:log(info, State, Fmt, Args).
-
 

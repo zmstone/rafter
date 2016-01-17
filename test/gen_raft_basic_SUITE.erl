@@ -9,13 +9,14 @@
 
 %%%_* ct callbacks =============================================================
 
-suite() -> [{timetrap, {seconds, 30}}].
+suite() -> [{timetrap, {seconds, 60}}].
 
 init_per_suite(Config) -> Config.
 
 end_per_suite(_Config) -> ok.
 
 init_per_testcase(Case, Config) ->
+  _ = random:seed(os:timestamp()),
   error_logger:info_msg("\n============= ~p ============\n", [Case]),
   Config.
 
@@ -47,6 +48,10 @@ elected(#state{tester_pid = Pid} = State) ->
   Pid ! {elected, self()},
   {ok, State}.
 
+stepdown(#state{tester_pid = Pid} = State) ->
+  Pid ! {stepdown, self()},
+  {ok, State}.
+
 %%%_* Test functions ===========================================================
 
 t_1_node_cluster(Config) when is_list(Config) ->
@@ -66,7 +71,7 @@ t_1_node_cluster(Config) when is_list(Config) ->
   ok = gen_raft:stop(Pid),
   ok.
 
-t_2_node_cluster(Config) when is_list(Config) ->
+t_2_nodes_cluster(Config) when is_list(Config) ->
   {ok, Dir} = file:get_cwd(),
   Peer1 = {peer1, node()},
   Peer2 = {peer2, node()},
@@ -94,24 +99,37 @@ t_2_node_cluster(Config) when is_list(Config) ->
   ok = gen_raft:stop(Pid2),
   ok.
 
-t_3_node_cluster(Config) when is_list(Config) ->
-  x_node_cluster(3).
+t_3_nodes_cluster(Config) when is_list(Config) ->
+  x_nodes_cluster(3).
 
-t_x_node_cluster(Config) when is_list(Config) ->
-  _ = random:seed(os:timestamp()),
-  X = random:uniform(32),
-  x_node_cluster(X).
+t_4_to_11_nodes_cluster(Config) when is_list(Config) ->
+  X = 3 + random:uniform(8),
+  x_nodes_cluster(X).
 
-x_node_cluster(X) ->
+t_12_to_23_nodes_cluster(Config) when is_list(Config) ->
+  X = 11 + random:uniform(12),
+  x_nodes_cluster(X).
+
+t_24_to_67_nodes_cluster(Config) when is_list(Config) ->
+  X = 23 + random:uniform(44),
+  x_nodes_cluster(X).
+
+x_nodes_cluster(X) ->
   {ok, Dir} = file:get_cwd(),
-  NameF = fun(I) -> "p" ++ lists:flatten(io_lib:format("~.2.0w", [I])) end,
+  NameF = fun(I) -> "p" ++ lists:flatten(io_lib:format("~.3.0w", [I])) end,
   Names = [list_to_atom(NameF(I)) || I <- lists:seq(1, X)],
   Ids = [{Name, node()} || Name <- Names],
   lists:foreach(
     fun(Id) ->
       ok = gen_raft:create_node(Dir, Id, Ids)
     end, Ids),
-  RaftInitArgs = [ {metadata_dir, Dir} ],
+  RaftInitArgs0 =
+    if
+      X > 23  -> [{election_timeout, 4000}];
+      X > 11  -> [{election_timeout, 1000}];
+      true    -> [{election_timeout, 500}]
+    end,
+  RaftInitArgs = [{metadata_dir, Dir} | RaftInitArgs0],
   Pids =
     lists:map(
       fun(Name) ->
@@ -151,26 +169,51 @@ wait_for_leader(Pids) ->
 wait_for_leader(Pids, MaxTimeToWait) ->
   receive
     {elected, Pid} ->
-      assert_cluster_member_roles(Pid, Pids),
-      ok = gen_raft:stop(Pid),
-      Pid
+      try
+        assert_cluster_member_roles(Pid, Pids)
+      catch throw : bad_state ->
+        wait_for_leader(Pids, MaxTimeToWait)
+      end,
+      Pid;
+    {stepdown, _Pid} ->
+      wait_for_leader(Pids, MaxTimeToWait)
   after MaxTimeToWait ->
     throw(timeout)
   end.
 
 assert_cluster_member_roles(Leader, Pids) ->
   ?assert(lists:member(Leader, Pids)),
+  {StateName, LeaderTerm} = gen_raft:get_state_and_term(Leader),
+  StateName =:= raft_leader orelse throw(bad_state),
   Followers = lists:delete(Leader, Pids),
-  lists:foreach(fun(Pid) -> assert_follower(Pid) end, Followers),
-  ok.
+  lists:foreach(fun(Pid) -> assert_follower(Pid, LeaderTerm) end,
+                Followers).
 
-assert_follower(Pid) ->
-  ?assertNot(gen_raft:is_leader(Pid)),
-  case gen_raft:get_raft_state_name(Pid) of
-    raft_follower ->
+assert_follower(Pid, LeaderTerm) ->
+  assert_follower(Pid, LeaderTerm, _Retry = 0).
+
+-define(RETRY_DELAY_MS, 100).
+-define(MAX_RETRY, 10).
+
+assert_follower(Pid, LeaderTerm, Retry) when Retry >= ?MAX_RETRY ->
+  Name = get_name(Pid),
+  {StateName, Term} = gen_raft:get_state_and_term(Pid),
+  ct:pal("~p is expected to be in state raft_follower "
+         "with term synced, but it's in state ~p, "
+         "term=~p leader_term=~p",
+         [Name, StateName, Term, LeaderTerm]),
+  throw(bad_state);
+assert_follower(Pid, LeaderTerm, Retry) ->
+  {StateName, Term} = gen_raft:get_state_and_term(Pid),
+  case StateName =:= raft_follower andalso Term =:= LeaderTerm of
+    true ->
       ok;
-    raft_candidate ->
-      timer:sleep(100),
-      ?assertEqual(raft_follower, gen_raft:get_raft_state_name(Pid))
+    false ->
+      timer:sleep(?RETRY_DELAY_MS),
+      assert_follower(Pid, LeaderTerm, Retry+1)
   end.
+
+get_name(Pid) ->
+  [{registered_name, Name}] = process_info(Pid, [registered_name]),
+  Name.
 

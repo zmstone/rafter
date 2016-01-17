@@ -8,6 +8,7 @@
         , maybe_start_election_timer/2
         , multi_cast/2
         , send_appendEntriesReply/3
+        , send_requestVoteReply/3
         ]).
 
 -include("gen_raft_private.hrl").
@@ -61,6 +62,8 @@ multi_cast(Peers, Msg) ->
                 ordsets:to_list(Peers)).
 
 %% @doc Handle requestVoteRPC, update raft meta, send reply.
+-spec handle_requestVoteRPC(raft_peer(), #requestVoteRPC{}, #?state{}) ->
+        {ok, VoteGranted :: boolean(), #?state{}}.
 handle_requestVoteRPC(FromPeer,
                       #requestVoteRPC{ newTerm  = ProposedTerm
                                      , lastTick = LastTick
@@ -74,7 +77,18 @@ handle_requestVoteRPC(FromPeer,
                                MyLastTick, RaftMeta),
   {ok, NewState} = gen_raft:put_raft_meta(NewRaftMeta, State),
   ok = send_requestVoteReply(FromPeer, VoteGranted, NewRaftMeta),
-  {ok, NewState}.
+  {ok, VoteGranted, NewState}.
+
+%% @doc Reply requestVoteRPC.
+-spec send_requestVoteReply(raft_peer(), boolean(), raft_meta()) -> ok.
+send_requestVoteReply(ReplyToPeer, VoteGranted, RaftMeta) ->
+  MyId = raft_meta:get_myId(RaftMeta),
+  MyTerm = raft_meta:get_currentTerm(RaftMeta),
+  Reply = ?raft_msg(MyId, #requestVoteReply{ voteGranted = VoteGranted
+                                           , peerTerm    = MyTerm
+                                           }),
+  ok = cast(ReplyToPeer, Reply).
+
 
 %% @doc Wrapper around error_logger.
 log(Level, State, Fmt, Args) ->
@@ -102,6 +116,7 @@ send_appendEntriesReply(From, Success, RaftMeta) ->
                              , success  = Success
                              },
   raft_utils:cast(From, ?raft_msg(MyId, Reply)).
+
 %%%*_/ internal functions ======================================================
 
 -spec log_header(#?state{}) -> iodata().
@@ -117,7 +132,7 @@ log_header(#?state{ name       = Name
                 raft_leader    -> leader
               end,
   Term = raft_meta:get_currentTerm(RaftMeta),
-  io_lib:format("[~p term=~p state=~p]", [Name, Term, StateName]).
+  io_lib:format("[~p ~p term=~p state=~p]", [Name, self(), Term, StateName]).
 
 %% @private start election timer.
 %% Return a tuple of reference and timer reference
@@ -131,20 +146,9 @@ start_election_timer(BaseTime) ->
   {MsgRef, Tref}.
 
 %% @private Get randomised election timeout value.
-%% time varies from BaseTime to 2*BaseTime.
 -spec randomised_election_timeout(timer:time()) -> timer:time().
 randomised_election_timeout(BaseTime) ->
-  random:uniform(BaseTime) + BaseTime.
-
-%% @private Reply requestVoteRPC.
--spec send_requestVoteReply(raft_peer(), boolean(), raft_meta()) -> ok.
-send_requestVoteReply(ReplyToPeer, VoteGranted, RaftMeta) ->
-  MyId = raft_meta:get_myId(RaftMeta),
-  MyTerm = raft_meta:get_currentTerm(RaftMeta),
-  Reply = ?raft_msg(MyId, #requestVoteReply{ voteGranted = VoteGranted
-                                           , peerTerm    = MyTerm
-                                           }),
-  ok = cast(ReplyToPeer, Reply).
+  random:uniform(BaseTime).
 
 %%%*_/ tests ===================================================================
 

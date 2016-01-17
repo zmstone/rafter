@@ -2,7 +2,9 @@
 
 %% public APIs
 -export([ create_node/3
-        , get_raft_state_name/1
+        , get_state/1
+        , get_state_and_term/1
+        , get_term/1
         , is_leader/1
         , start/5
         , start_link/5
@@ -29,6 +31,8 @@
 -type state() :: #?state{}.
 -define(raft_state_name(State), element(1, State#?state.raft_state)).
 
+-type peer() :: raft_name() | pid() | raft_peer().
+
 %%%*_/ Callback definitions ====================================================
 
 -callback init(CbModArgs :: term()) ->
@@ -38,6 +42,8 @@
 -callback terminate(Reason :: term(), CbModArgs :: term()) -> any().
 
 -callback elected(CbState :: cb_state()) -> {ok, NewCbState :: cb_state()}.
+
+-callback stepdown(CbState :: cb_state()) -> {ok, NewCbState :: cb_state()}.
 
 %%%*_/ APIs ====================================================================
 
@@ -79,15 +85,30 @@ create_node(MetadataDir, ?raft_peer(Name, _Node) = MyId, Peers) ->
   {ok, IoData} = raft_meta:serialize(RaftMeta),
   ok = file:write_file(Filename, IoData).
 
-%% @doc Return true if the process is in leader state.
--spec is_leader(raft_name() | pid()) -> boolean().
-is_leader(Name_or_Pid) ->
-  raft_leader =:= get_raft_state_name(Name_or_Pid).
+%% @doc Return raft state name and current raft term in a tuple.
+-spec get_state_and_term(peer()) -> {raft_state_name(), raft_term()}.
+get_state_and_term(Peer) ->
+  call_priv(Peer, get_state_and_term).
 
-%% @doc Return the current raft state name the given Name or Pid is in.
--spec get_raft_state_name(raft_name() | pid()) -> raft_state_name().
-get_raft_state_name(Name_or_Pid) ->
-  call_priv(Name_or_Pid, get_raft_state_name).
+%% @doc Return true if the process is in leader state.
+-spec is_leader(peer()) -> boolean().
+is_leader(Peer) ->
+  case get_state_and_term(Peer) of
+    {raft_leader, _} -> true;
+    _                -> false
+  end.
+
+%% @doc Return the current raft state name the given peer is in.
+-spec get_state(peer()) -> raft_state_name().
+get_state(Peer) ->
+  {StateName, _Term} = get_state_and_term(Peer),
+  StateName.
+
+%% @doc Return the current raft term the given peer is in.
+-spec get_term(peer()) -> raft_term().
+get_term(Peer) ->
+  {_StateName, Term} = get_state_and_term(Peer),
+  Term.
 
 %%%*_/ Private APIs ============================================================
 
@@ -254,8 +275,11 @@ is_error_termination(_)             -> true.
 
 -spec handle_gen_raft_call(Call :: term(), state()) ->
         {Result :: term(), state()}.
-handle_gen_raft_call(get_raft_state_name, State) ->
-  Result = ?raft_state_name(State),
+handle_gen_raft_call(get_state_and_term,
+                     #?state{raft_meta = RaftMeta} = State) ->
+  StateName = ?raft_state_name(State),
+  Term = raft_meta:get_currentTerm(RaftMeta),
+  Result = {StateName, Term},
   {Result, State}.
 
 handle_gen_raft_cast(stop, State) ->

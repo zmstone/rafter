@@ -1,8 +1,9 @@
 -module(raft_follower).
 
--export([ init/2
+-export([ become/1
         , become/3
         , handle_msg/3
+        , init/2
         ]).
 
 -export_type([ follower/0
@@ -30,15 +31,15 @@ init(RaftMeta, InitArgs) ->
   ok = connect_peer_nodes(RaftMeta),
   maybe_start_election_timer(ElectionTimeout, RaftMeta, #?follower{}).
 
-%% becoming follower from candidate or leader state.
-become(#?state{ init_args = InitArgs
-              , raft_meta = RaftMeta
-              } = State, From, Msg) ->
-  loginfo(State, "becoming follower", []),
-  ElectionTimeout = raft_utils:get_election_timeout(InitArgs),
-  {ok, Follower} =
-    maybe_start_election_timer(ElectionTimeout, RaftMeta, #?follower{}),
-  NewState = State#?state{raft_state = Follower},
+%% @doc Become follower state.
+become(State) ->
+  {ok, NewState} = do_become(State),
+  gen_raft:continue(NewState).
+
+%% @doc Become follower from candidate or leader state
+%% and continue handleing the received message
+become(State, From, Msg) ->
+  {ok, NewState} = do_become(State),
   handle_msg(From, Msg, NewState).
 
 handle_msg(self, #electionTimeout{ref = MsgRef},
@@ -55,7 +56,8 @@ handle_msg(self, #electionTimeout{ref = MsgRef},
   true = raft_meta:is_cluster_member(RaftMeta), %% assert
   raft_candidate:become(State);
 handle_msg(From, #requestVoteRPC{} = RPC, State) ->
-  {ok, NewState} = raft_utils:handle_requestVoteRPC(From, RPC, State),
+  {ok, _VoteGranted, NewState} =
+    raft_utils:handle_requestVoteRPC(From, RPC, State),
   gen_raft:continue(NewState);
 handle_msg(From, #appendEntriesRPC{leaderTerm = LeaderTerm} = RPC,
            #?state{raft_meta = RaftMeta} = State) ->
@@ -83,9 +85,31 @@ handle_msg(self, #leaderDown{leaderPeer = LeaderPeer, reason = _Reason},
       gen_raft:continue(State#?state{raft_state = NewFollower});
     false ->
       gen_raft:continue(State)
-  end.
+  end;
+handle_msg(_From, #requestVoteReply{peerTerm = PeerTerm}, State) ->
+  %% This is for the vote when I was in candidate state, discard.
+  gen_raft:continue(maybe_update_term(State, PeerTerm));
+handle_msg(_From, #appendEntriesReply{peerTerm = PeerTerm}, State) ->
+  %% This is for the appendEntriesRPC when I was in leader state, discard.
+  gen_raft:continue(maybe_update_term(State, PeerTerm)).
 
 %%%*_/ internal functions ======================================================
+
+-spec maybe_update_term(#?state{}, raft_term()) -> #?state{}.
+maybe_update_term(#?state{raft_meta = RaftMeta} = State, PeerTerm) ->
+  NewRaftMeta = raft_meta:maybe_update_currentTerm(RaftMeta, PeerTerm),
+  State#?state{raft_meta = NewRaftMeta}.
+
+-spec do_become(#?state{}) -> {ok, #?state{}}.
+do_become(#?state{ init_args = InitArgs
+                 , raft_meta = RaftMeta
+                 } = State) ->
+  loginfo(State, "becoming follower", []),
+  ElectionTimeout = raft_utils:get_election_timeout(InitArgs),
+  {ok, Follower} =
+    maybe_start_election_timer(ElectionTimeout, RaftMeta, #?follower{}),
+  NewState = State#?state{raft_state = Follower},
+  {ok, NewState}.
 
 %% @private Establish connection to all peer erlang nodes.
 -spec connect_peer_nodes(raft_meta()) -> ok.
@@ -107,7 +131,6 @@ handle_appendEntriesRPC(From, RPC, State) ->
          } = State,
   case raft_logs:maybe_append(RaftLogs, Entries, PrevTick, CommitTick) of
     {ok, NewRaftLogs} ->
-      ok = maybe_log_leader_emerge(State, From, LeaderTerm),
       NewRaftMeta = raft_meta:maybe_update_currentTerm(RaftMeta, LeaderTerm),
       #?follower{election_timer = Timer} = Follower,
       ok = raft_utils:cancel_election_timer(Timer),
@@ -148,7 +171,6 @@ do_monitor_leader(?raft_peer(Name, Node) = Leader) ->
       Ref = erlang:monitor(process, {Name, Node}),
       receive
         {'DOWN', Ref, process, _, Reason} ->
-          %% make a message as if sent from leader
           Msg = #leaderDown{ leaderPeer = Leader
                            , reason     = Reason
                            },
@@ -166,14 +188,4 @@ maybe_start_election_timer(ElectionTimeout, RaftMeta, Follower) ->
   #?follower{election_timer = ?undef} = Follower, %% assert
   TimerRef = raft_utils:maybe_start_election_timer(RaftMeta, ElectionTimeout),
   {ok, Follower#?follower{election_timer = TimerRef}}.
-
-maybe_log_leader_emerge(State, Leader, Term) ->
-  #?follower{leader_peer = CurrentLeader} = State#?state.raft_state,
-  case CurrentLeader =:= Leader of
-    true ->
-      ok;
-    false ->
-      loginfo(State, "leader emerged, leader_peer=~w leader_term=~w",
-              [Leader, Term])
-  end.
 
