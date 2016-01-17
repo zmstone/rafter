@@ -12,3 +12,5 @@ rel/example_project
 .erlang.mk
 /logs
 xrefr
+ct.cover.spec
+ct.coverdata
