@@ -41,6 +41,18 @@ handle_msg(From, #requestVoteRPC{newTerm = NewTerm} = RPC,
       ok = raft_utils:send_requestVoteReply(From, false, RaftMeta),
       gen_raft:continue(State)
   end;
+handle_msg(From, #appendEntriesRPC{leaderTerm = PeerTerm} = RPC,
+           #?state{raft_meta = RaftMeta} = State) ->
+  MyCurrentTerm = raft_meta:get_currentTerm(RaftMeta),
+  case PeerTerm > MyCurrentTerm of
+    true ->
+      log_stepdown(State, From, appendEntriesRPC, PeerTerm),
+      {ok, NewState} = stepdown(State),
+      raft_follower:become(NewState, From, RPC);
+    false ->
+      ok = raft_utils:send_appendEntriesReply(From, _Success = false, RaftMeta),
+      gen_raft:continue(State)
+  end;
 handle_msg(From, #requestVoteReply{peerTerm = PeerTerm}, State) ->
   ContinueFun = fun() -> gen_raft:continue(State) end,
   maybe_stepdown(State, From, requestVoteReply, PeerTerm, ContinueFun);
