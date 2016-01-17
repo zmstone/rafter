@@ -170,11 +170,11 @@ wait_for_leader(Pids, MaxTimeToWait) ->
   receive
     {elected, Pid} ->
       try
-        assert_cluster_member_roles(Pid, Pids)
+        assert_cluster_member_roles(Pid, Pids),
+        Pid
       catch throw : bad_state ->
         wait_for_leader(Pids, MaxTimeToWait)
-      end,
-      Pid;
+      end;
     {stepdown, _Pid} ->
       wait_for_leader(Pids, MaxTimeToWait)
   after MaxTimeToWait ->
@@ -184,7 +184,15 @@ wait_for_leader(Pids, MaxTimeToWait) ->
 assert_cluster_member_roles(Leader, Pids) ->
   ?assert(lists:member(Leader, Pids)),
   {StateName, LeaderTerm} = gen_raft:get_state_and_term(Leader),
-  StateName =:= raft_leader orelse throw(bad_state),
+  case StateName =:= raft_leader of
+    true ->
+      ok;
+    false ->
+      error_logger:warning_msg("~p is expected to be in leader state "
+                               "but perhaps just stepped down",
+                               [get_name(Leader)]),
+      throw(bad_state)
+  end,
   Followers = lists:delete(Leader, Pids),
   lists:foreach(fun(Pid) -> assert_follower(Pid, LeaderTerm) end,
                 Followers).
@@ -198,10 +206,10 @@ assert_follower(Pid, LeaderTerm) ->
 assert_follower(Pid, LeaderTerm, Retry) when Retry >= ?MAX_RETRY ->
   Name = get_name(Pid),
   {StateName, Term} = gen_raft:get_state_and_term(Pid),
-  ct:pal("~p is expected to be in state raft_follower "
-         "with term synced, but it's in state ~p, "
-         "term=~p leader_term=~p",
-         [Name, StateName, Term, LeaderTerm]),
+  error_logger:warning_msg("~p is expected to be in state raft_follower "
+                           "with term synced, but it's in state ~p, "
+                           "term=~p leader_term=~p",
+                           [Name, StateName, Term, LeaderTerm]),
   throw(bad_state);
 assert_follower(Pid, LeaderTerm, Retry) ->
   {StateName, Term} = gen_raft:get_state_and_term(Pid),
