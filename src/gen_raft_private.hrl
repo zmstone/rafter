@@ -39,9 +39,8 @@
                     | raft_candidate:candidate()
                     | raft_leader:leader().
 
-%% election timout randomised from N to 2*N
-%% where N is by default ?DEFAULT_ELECTION_TIMEOUT
--define(DEFAULT_ELECTION_TIMEOUT, 500).
+%% Default election timeout.
+-define(DEFAULT_ELECTION_TIMEOUT, 1000).
 
 -record(gen_raft_state,
         { name       :: atom()

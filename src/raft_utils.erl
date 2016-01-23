@@ -38,7 +38,7 @@ maybe_start_election_timer(RaftMeta, ElectionTimeout) ->
 cancel_election_timer(?undef) -> ok;
 cancel_election_timer({MsgRef, Tref}) ->
   %% cancel timer
-  _ = timer:cancel(Tref),
+  _ = erlang:cancel_timer(Tref),
   %% flush message
   receive
     ?raft_msg(self, #electionTimeout{ref = MsgRef}) ->
@@ -142,7 +142,7 @@ start_election_timer(BaseTime) ->
   Timeout = randomised_election_timeout(BaseTime),
   MsgRef = make_ref(),
   Msg = ?raft_msg(self, #electionTimeout{ref = MsgRef}),
-  {ok, Tref} = timer:send_after(Timeout, Msg),
+  Tref = erlang:send_after(Timeout, self(), Msg),
   {MsgRef, Tref}.
 
 %% @private Get randomised election timeout value.
