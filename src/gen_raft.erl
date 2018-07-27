@@ -116,7 +116,7 @@ get_term(Peer) ->
 init_it(Starter, self, {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts) ->
   init_it(Starter, self(), {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts);
 init_it(Starter, Parent, {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts) ->
-  _ = random:seed(os:timestamp()),
+  _ = rand:seed(exsplus, os:timestamp()),
   case CbMod:init(CbModArgs) of
     {ok, LastTick, CbState} ->
       {ok, RaftLogs} = raft_logs:new(LastTick),
@@ -133,8 +133,7 @@ init_it(Starter, Parent, {local, Name}, CbMod, {InitArgs, CbModArgs}, Opts) ->
       self() ! ?gen_raft_init(InitArgs),
       try
         loop(State)
-      catch error : E ->
-        Stacktrace = erlang:get_stacktrace(),
+      catch error : E : Stacktrace ->
         terminate({E, Stacktrace}, State)
       end;
     {error, Reason} ->
@@ -255,9 +254,9 @@ terminate(Reason, #?state{ cb_mod   = CbMod
                          } = State) ->
   try
     _ = CbMod:terminate(Reason, CbState)
-  catch C : E ->
+  catch C : E : Stacktrace ->
     logerror(State, "bad callback termination: ~p:~p\n~p",
-             [C, E, erlang:get_stacktrace()])
+             [C, E, Stacktrace])
   end,
   case is_error_termination(Reason) of
     true  ->

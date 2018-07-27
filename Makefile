@@ -1,17 +1,34 @@
-PROJECT = gen_raft
-PROJECT_DESCRIPTION = High level raft abstraction
-PROJECT_VERSION = 0.0.1
+all: compile
 
-COVER = true
+.PHONY: clean
+clean:
+	@rebar3 clean
 
-include erlang.mk
+.PHONY: eunit
+eunit:
+	@rebar3 eunit -v
 
-ERLC_OPTS += -DAPPLICATION=gen_raft
-TEST_ERLC_OPTS += -DAPPLICATION=gen_raft
+.PHONY: compile
+compile:
+	@rebar3 compile
 
-cover-print:
-	./scripts/cover-print-not-covered-lines.escript ./ct.coverdata ./eunit.coverdata
-	./scripts/cover-print-summary.escript ./ct.coverdata ./eunit.coverdata
+.PHONY: distclean
+distclean: clean
+	@rm -rf _build deps
+	@rm -f rebar.lock
 
-t: ct cover-print
+.PHONY: edoc
+edoc:
+	@rebar3 edoc
 
+.PHONY: dialyzer
+dialyzer:
+	@rebar3 dialyzer
+
+.PHONY: hex-publish
+hex-publish: distclean
+	@rebar3 hex publish
+
+.PHONY: cover
+cover:
+	@rebar3 cover -v

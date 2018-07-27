@@ -1,3 +1,4 @@
+_build
 .eunit
 deps
 *.o
@@ -15,3 +16,4 @@ xrefr
 ct.cover.spec
 ct.coverdata
 eunit.coverdata
+rebar.lock
