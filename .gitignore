@@ -17,3 +17,4 @@ ct.cover.spec
 ct.coverdata
 eunit.coverdata
 rebar.lock
+tdata/

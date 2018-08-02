@@ -3,7 +3,7 @@
 , [ {description,"High level Raft abstraction"}
   , {vsn,"0.1.0"}
   , {registered,[]}
-  , {applications,[kernel,stdlib]}
+  , {applications,[kernel, stdlib]}
   , {env,[]}
   , {modules,[]}
   , {licenses,["Apache License 2.0"]}

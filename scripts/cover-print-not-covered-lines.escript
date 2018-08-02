@@ -1,6 +1,6 @@
 #!/usr/bin/env escript
 %% -*- erlang -*-
-%%! -smp enable -sname notcoveredlinessummary -pa ebin -pa ../ebin
+%%! -pa _build/test/lib/gen_raft/ebin
 
 %%%
 %%%   Copyright (c) 2014, 2015, Klarna AB
@@ -20,7 +20,8 @@
 
 -mode(compile).
 
-main(CoverdataFiles) ->
+main([]) ->
+  CoverdataFiles = filelib:wildcard("_build/test/cover/*.coverdata"),
   Parent = self(),
   Ref = make_ref(),
   erlang:spawn_link(
@@ -62,6 +63,7 @@ analyse_module(Module) ->
     end, [], Lines).
 
 print_mod_summary(_Module, []) -> ok;
+print_mod_summary(non_existing, _) -> ok;
 print_mod_summary(Module, NotCoveredLines) ->
   io:format("================ ~p ================\n", [Module]),
   case whicherl(Module) of

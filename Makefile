@@ -1,12 +1,15 @@
 all: compile
 
+.PHONY: t
+t: eunit cover
+
 .PHONY: clean
 clean:
 	@rebar3 clean
 
 .PHONY: eunit
 eunit:
-	@rebar3 eunit -v
+	@rebar3 eunit -v --sname raft
 
 .PHONY: compile
 compile:
@@ -32,3 +35,11 @@ hex-publish: distclean
 .PHONY: cover
 cover:
 	@rebar3 cover -v
+
+.PHONY: es
+es: compile
+	@rebar3 escriptize
+
+.PHONY: rel
+rel:
+	@rebar3 release
