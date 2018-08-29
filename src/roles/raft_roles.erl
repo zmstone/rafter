@@ -24,8 +24,9 @@
 
 -define(VERY_FIRST_EPOCH, 0).
 
--define(DBG(D, Fmt, Args), ?log_debug("~s (~p): " ++ Fmt, [fmt_id(D), maps:get(current_epoch, D) | Args])).
--define(INFO(D, Fmt, Args), ?log_info("~s (~p): " ++ Fmt, [fmt_id(D), maps:get(current_epoch, D) | Args])).
+-define(FMT_ARGS(D, Args), [maps:get(current_epoch, D), fmt_id(D) | Args]).
+-define(DBG(D, Fmt, Args), ?log_debug("[~p] ~s: " ++ Fmt, ?FMT_ARGS(D, Args))).
+-define(INFO(D, Fmt, Args), ?log_info("[~p] ~s: " ++ Fmt, ?FMT_ARGS(D, Args))).
 
 -type epoch() :: raft:epoch().
 -type member_id() :: raft:member_id().
@@ -114,7 +115,7 @@ follower(enter, _OldState, Data) ->
   %% emit an event to self after a delay
   Timeout = get_election_timeout(Data),
   Action = {state_timeout, Timeout, Timeout},
-  {keep_state, Data, Action};
+  {keep_state, Data#{votes := []}, Action};
 follower(state_timeout, Timeout, #{leader_id := ?none} = Data) ->
   ?DBG(Data, "Election timer expired after ~p ms", [Timeout]),
   case is_majority_present(Data) of
@@ -135,6 +136,15 @@ follower(info, ?vote_request(Id, Epoch, Lid), Data0) ->
   {keep_state, Data};
 follower(info, ?leader_announcement(Id, _Epoch), Data) ->
   {keep_state, Data#{leader_id := Id}};
+follower(info, ?peer_down(PeerId), #{leader_id := LeaderId} = Data0) ->
+  Data = handle_peer_down(PeerId, Data0),
+  case PeerId =:= LeaderId of
+    true ->
+      ?INFO(Data, "Leader down!", []),
+      {repeat_state, Data#{leader_id := ?none}};
+    false ->
+      {keep_state, Data}
+  end;
 follower(Type, Event, Data) ->
   common(?follower, Type, Event, Data).
 
@@ -145,10 +155,11 @@ candidate(enter, _OldState, Data0) ->
   Action = {state_timeout, Timeout, Timeout},
   {keep_state, Data, Action};
 candidate(info, ?vote_granted(Id, Epoch), #{current_epoch := Epoch} = Data0) ->
-  ?DBG(Data0, "Received vote from ~p", [Id]),
   Data = vote_granted(Data0, Id),
-  case has_majority_vote(Data) of
-    true -> next_state(?leader, Data);
+  {VoteCount, MemberCount} = count_votes(Data),
+  ?DBG(Data0, "Received vote from ~p, ~p/~p.", [Id, VoteCount, MemberCount]),
+  case VoteCount > MemberCount div 2 of
+    true  -> next_state(?leader, Data);
     false -> {keep_state, Data}
   end;
 candidate(info, ?vote_granted(Id, Epoch), Data) ->
@@ -162,7 +173,7 @@ candidate(info, ?vote_request(Id, Epoch, _Lid), Data) ->
   case Epoch > MyEpoch of
     true ->
       ?DBG(Data, "Higher epoch found from ~p (~p), stepping down", [Id, Epoch]),
-      {next_state, Data, postpone};
+      next_state(?follower, Data, postpone);
     false ->
       ?DBG(Data, "Discarded vote request from ~p (~p)", [Id, Epoch]),
       {keep_state, Data}
@@ -176,6 +187,7 @@ leader(enter, OldState, #{ current_epoch := Epoch
                          , my_id := MyId
                          } = Data) ->
   ?candidate = OldState, %% assert
+  ?INFO(Data, "Elected!", []),
   Msg = ?leader_announcement(MyId, Epoch),
   ok = broadcast(Data, Msg),
   {keep_state, Data#{leader_id := MyId}};
@@ -192,20 +204,23 @@ leader(info, ?vote_request(Id, Epoch, _Lid),
 leader(Type, Event, Data) ->
   common(?leader, Type, Event, Data).
 
-
 common(_StateName, info, ?peer_connected(Id, SendFun),
        #{peers := Peers0} = Data0) ->
   Peers = raft_peers:peer_connected(Peers0, Id, SendFun),
   Data = Data0#{peers := Peers},
   {keep_state, Data};
-common(_StateName, info, ?peer_down(PeerId),
-       #{peers := Peers0} = Data0) ->
-  Peers = raft_peers:peer_down(Peers0, PeerId),
-  Data = Data0#{peers := Peers},
+common(_StateName, info, ?peer_down(PeerId), Data0) ->
+  Data = handle_peer_down(PeerId, Data0),
   {keep_state, Data};
 common(StateName, Type, Event, Data) ->
   ?INFO(Data, "Event {~p, ~p} discarded at ~p state", [Type, Event, StateName]),
   {keep_state, Data}.
+
+%%%*_/ Internals ===============================================================
+
+handle_peer_down(PeerId, #{peers := Peers0} = Data) ->
+  Peers = raft_peers:peer_down(Peers0, PeerId),
+  Data#{peers := Peers}.
 
 data_dir(Cfg) -> maps:get(?data_dir, Cfg).
 
@@ -292,8 +307,8 @@ send_vote_request_to_peers(#{ my_id := MyId
   Msg = ?vote_request(MyId, Epoch, Lid),
   ok = broadcast(Data, Msg).
 
-has_majority_vote(#{votes := Votes} = Data) ->
-  length(Votes) > length(all_peer_ids(Data)).
+count_votes(#{votes := Votes} = Data) ->
+  {length(Votes), 1 + length(all_peer_ids(Data))}.
 
 persist_role_state(#{opts := Opts} = Data) ->
   ok = raft_roles_store:write(data_dir(Opts), Data).
