@@ -2,8 +2,8 @@
 -module(raft_peer_rn).
 
 -export([init_self/2, spawn_connector/4, unify_id/1]).
-
 -export([connector_loop/5, loop_monitored/5]).
+-export([send/2]).
 
 -export_type([id/0, opts/0]).
 
@@ -49,6 +49,10 @@ spawn_connector(MyId, Peer, Opts, Parent) ->
           end),
   {Id, Pid}.
 
+send(PeerId, Msg) ->
+  _ = erlang:send(PeerId, Msg),
+  ok.
+
 %%%*_/ internal functions ======================================================
 
 maybe_log_failure(MyId, LastTs, Opts, PeerId) ->
@@ -68,7 +72,7 @@ connector_loop(MyId, ?PEER_ID(_, _) = PeerId, Parent, Opts, LastFailureLogTs0) -
     true ->
       ?log_debug("~p: Connected to peer ~p", [MyId, PeerId]),
       Mref = erlang:monitor(process, PeerId),
-      SendFun = fun(Msg) -> _ = erlang:send(PeerId, Msg), ok end,
+      SendFun = fun(Msg) -> ?MODULE:send(PeerId, Msg) end,
       erlang:send(Parent, ?peer_connected(PeerId, SendFun)),
       ?MODULE:loop_monitored(MyId, PeerId, Parent, Mref, Opts);
     false ->

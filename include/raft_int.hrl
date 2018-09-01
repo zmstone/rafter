@@ -9,4 +9,5 @@
 -define(log_warn(Fmt, Args),  logger:warning(Fmt, Args)).
 -define(log_error(Fmt, Args), logger:error(Fmt, Args)).
 
+-define(IS_MAJORITY(Count, Total), (Count > (Total) div 2)).
 -endif.

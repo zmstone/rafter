@@ -10,9 +10,11 @@
 -define(peer_conn_opts, peer_conn_opts).
 -define(election_timeout_base, election_timeout_base).
 -define(election_timeout_rand, election_timeout_rand).
+-define(stay_down_timeout, stay_down_timeout).
 
 %% default values
 -define(ELECTION_TIMEOUT_BASE, 500).
 -define(ELECTION_TIMEOUT_RAND, 500).
+-define(STAY_DOWN_TIMEOUT, 10000).
 
 -endif.

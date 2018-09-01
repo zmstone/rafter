@@ -4,9 +4,16 @@
 -define(peer_down(PeerId), {peer_down, PeerId}).
 -define(peer_connected(PeerId, SendFun), {peer_connected, PeerId, SendFun}).
 -define(stop_connector, stop_connector).
--define(vote_request(Id, Epoch, LastLid), {vote_request, Id, Epoch, LastLid}).
--define(vote_granted(Id, Epoch), {vote_granted, Epoch, Id}).
--define(leader_announcement(Id, Epoch), {leader_announcement, Id, Epoch}).
+
+%% We do not have heartbeats, use a step_down message to
+%% notify peers (followers) to start a new election.
+-define(step_down(LeaderId, Epoch), {step_down, LeaderId, Epoch}).
+
+-define(vote_req(Id, Epoch, LastLid), {vote_req, Id, Epoch, LastLid}).
+-define(vote_rsp(Id, Epoch, IsGranted), {vote_rsp, Id, Epoch, IsGranted}).
+
+-define(rlog_req(Id, Epoch, Args), {rlog_req, Id, Epoch, Args}).
+-define(rlog_rsp(Id, Epoch, Result), {rlog_rsp, Id, Epoch, Result}).
 
 -endif.
 

@@ -23,6 +23,7 @@
 
 -export_type([id/0, opts/0, peers/0]).
 
+-include("raft_int.hrl").
 -include("raft_msgs.hrl").
 
 -type opts() :: raft_peer_rn:opts().
@@ -76,7 +77,9 @@ peer_down(#{connected := Connected} = Peers, Id) ->
 is_majority_present(#{ connectors := Connectors
                      , connected := Connected
                      }) ->
-  maps:size(Connected) * 2 >= maps:size(Connectors).
+  ClusterSize = 1 + maps:size(Connectors), %% including self
+  ConnectedCount = 1 + maps:size(Connected), %% including self
+  ?IS_MAJORITY(ConnectedCount, ClusterSize).
 
 %% @doc Paernt should expect `?peer_connected(Id, SendFun)' message when connection
 %% is established, and `?peer_down(Id)' message when connection is down.
