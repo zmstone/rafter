@@ -50,7 +50,12 @@ spawn_connector(MyId, Peer, Opts, Parent) ->
   {Id, Pid}.
 
 send(PeerId, Msg) ->
-  _ = erlang:send(PeerId, Msg),
+  try
+    erlang:send(PeerId, Msg)
+  catch
+    _ : _ ->
+      ok
+  end,
   ok.
 
 %%%*_/ internal functions ======================================================
@@ -107,7 +112,7 @@ connect_node(Node, Opts) ->
   end.
 
 is_remote_pid_alive(Name, Node) ->
-  case rpc:call(Node, erlang, whereis, [Name], 1000) of
+  case rpc:call(Node, erlang, whereis, [Name], 5000) of
     Pid when is_pid(Pid) -> true;
     _ ->
       false

@@ -136,7 +136,7 @@ follower(state_timeout, Timeout, #{leader_id := ?none} = Data) ->
     true ->
       next_state(?candidate, Data);
     false ->
-      ?DBG(Data, "not enough members present, stay down", []),
+      ?ERR(Data, "Not enough members present, stay down", []),
       %% repeat_state instead of keep_state so the 'enter' event
       %% will be triggered again to have a new timer started.
       {repeat_state, Data}
@@ -162,6 +162,10 @@ follower(info, ?peer_connected(Id, SendFun),
     _ ->
       {keep_state, Data}
   end;
+follower(info, ?peer_connected(Id, SendFun), #{peers := Peers0} = Data0) ->
+  Peers = raft_peers:peer_connected(Peers0, Id, SendFun),
+  Data = Data0#{peers := Peers},
+  {keep_state, Data};
 follower(info, ?peer_down(PeerId), #{leader_id := LeaderId} = Data0) ->
   Data = handle_peer_down(PeerId, Data0),
   case PeerId =:= LeaderId of
@@ -198,31 +202,39 @@ candidate(info, ?peer_down(PeerId), Data0) ->
     true -> {keep_state, Data};
     false -> next_state(?follower, Data)
   end;
+candidate(info, ?peer_connected(_, _), Data) ->
+  %% handle it in the next state, either follower or leader
+  {keep_state, Data, postpone};
 candidate(Type, Event, Data) ->
   common(?candidate, Type, Event, Data).
 
-leader(enter, OldState, #{ current_epoch := Epoch
-                         , my_id := MyId
-                         } = Data) ->
+leader(enter, OldState, #{my_id := MyId} = Data) ->
   ?candidate = OldState, %% assert
   ?INF(Data, "Elected!", []),
-  Msg = ?rlog_req(MyId, Epoch, []),
+  Msg = make_rlog_req(Data),
   ok = broadcast(Data, Msg),
   {keep_state, Data#{leader_id := MyId}};
-leader(info, ?vote_rsp(Id, Epoch, _IsGranted = true),
-       #{current_epoch := Epoch} = Data0) ->
-  Data = vote_granted(Data0, Id),
-  {VoteCount, MemberCount} = count_votes(Data),
-  ?DBG(Data0, "Received vote from ~p, ~p/~p.", [Id, VoteCount, MemberCount]),
+leader(info, ?peer_connected(Id, SendFun),
+       #{peers := Peers0} = Data0) ->
+  Peers = raft_peers:peer_connected(Peers0, Id, SendFun),
+  Data = Data0#{peers := Peers},
+  Msg = make_rlog_req(Data),
+  ok = cast(Data, Id, Msg),
   {keep_state, Data};
 leader(info, ?peer_down(PeerId), Data0) ->
   Data = handle_peer_down(PeerId, Data0),
   case is_majority_present(Data) of
     true -> {keep_state, Data};
     false ->
-      ?ERR(Data, "lost connection to majority, stepping down", []),
+      ?ERR(Data, "Lost connection to majority, stepping down", []),
       do_step_down(Data, [])
   end;
+leader(info, ?vote_rsp(Id, Epoch, _IsGranted = true),
+       #{current_epoch := Epoch} = Data0) ->
+  Data = vote_granted(Data0, Id),
+  {VoteCount, MemberCount} = count_votes(Data),
+  ?DBG(Data0, "Received vote from ~p, ~p/~p.", [Id, VoteCount, MemberCount]),
+  {keep_state, Data};
 leader(info, ?rlog_rsp(Id, Epoch, ?outdated), Data0) ->
   {IsNewEpoch, Data} = maybe_update_epoch(Id, Epoch, Data0),
   IsNewEpoch = true, %% assert
@@ -235,11 +247,6 @@ leader(info, ?rlog_rsp(Id, _Epoch, ?rlog_mismatch(PrevLid)), Data) ->
 leader(Type, Event, Data) ->
   common(?leader, Type, Event, Data).
 
-common(_StateName, info, ?peer_connected(Id, SendFun),
-       #{peers := Peers0} = Data0) ->
-  Peers = raft_peers:peer_connected(Peers0, Id, SendFun),
-  Data = Data0#{peers := Peers},
-  {keep_state, Data};
 common(_StateName, info, ?vote_req(Id, Epoch, _Lid), #{my_id := MyId} = Data0) ->
   {IsNewEpoch, Data} = maybe_update_epoch(Id, Epoch, Data0),
   case IsNewEpoch of
@@ -302,6 +309,14 @@ handle_rlog_req_1(?leader, Data, _Id, _Args) ->
   %% step down and handle this event at follower state
   do_step_down(Data, postpone).
 
+make_rlog_req(#{ my_id := MyId
+               , current_epoch := Epoch
+               }) ->
+  Args = #{ prev_lid => todo
+          , commit_index => todo
+          },
+  ?rlog_req(MyId, Epoch, Args).
+
 handle_rlog_ok(Data, _Id) ->
   %% TODO
   {keep_state, Data}.
@@ -315,7 +330,7 @@ append_rlogs(Data, _Args) ->
   {?rlog_ok, Data}.
 
 maybe_update_leader(Id, #{leader_id := ?none} = Data) ->
-  ?INF(Data, "Leader ~p elected", [Id]),
+  ?INF(Data, "Discovered leader ~p", [Id]),
   Data#{leader_id := Id};
 maybe_update_leader(Id, #{leader_id := OldLeader} = Data) ->
   ?INF(Data, "New leader ~p replacing old leader ~p", [Id, OldLeader]),
