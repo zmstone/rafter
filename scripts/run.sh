@@ -13,5 +13,8 @@ done
 SC_DIR=`pwd -P`
 cd "$CUR_DIR"
 
-exec $SC_DIR/../_build/default/rel/raft/bin/raft -eval "raft_es:start($1)"
+CLUSTER_SIZE=$1
+LOG_LEVEL="${2:-info}"
+
+exec $SC_DIR/../_build/default/rel/raft/bin/raft -eval "raft_es:start(${CLUSTER_SIZE},${LOG_LEVEL})"
 

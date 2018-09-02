@@ -1,7 +1,7 @@
 %% escript module
 -module(raft_es).
 
--export([main/1, start/0, start/1, start_one/2, kill_one/1]).
+-export([main/1, start/0, start/1, start/2, start_one/2, kill_one/1]).
 
 -include("raft_cfg.hrl").
 
@@ -21,12 +21,16 @@ loop_until_exit() ->
 
 start() -> start(3).
 
-start([N]) when is_atom(N) ->
-  start(atom_to_list(N));
-start(N) when is_list(N) ->
-  start(list_to_integer(N));
-start(N) when is_integer(N) ->
-  logger:set_primary_config(level, debug),
+start(N) -> start(N, info).
+
+start([N], Level) when is_atom(N) ->
+  start(atom_to_list(N), Level);
+start(N, Level) when is_list(N) ->
+  start(list_to_integer(N), Level);
+start(N, Level) -> do_start(N, Level).
+
+do_start(N, Level) when is_integer(N) ->
+  logger:set_primary_config(level, Level),
   Ids = lists:map(fun make_id/1, lists:seq(1, N)),
   lists:map(fun(I) -> start_one(I, Ids) end, Ids).
 
