@@ -14,7 +14,7 @@ spawn_stop_connector_test() ->
                    receive Msg -> Tester ! {self(), Msg} end
                end),
   Id = ?PEER_ID(Name, node()),
-  {Id, Pid} = raft_peer_rn:spawn_connector(Id, [], self()),
+  {Id, Pid} = spawn_connector(Id, []),
   SendFun = receive ?peer_connected(Id, F) -> F end,
   Msg = make_ref(),
   ok = SendFun(Msg),
@@ -34,7 +34,7 @@ stop_monitored_test() ->
                end),
   Id = ?PEER_ID(Name, node()),
   Opts = [{loop_monitored_delay_ms, 1}],
-  {Id, Pid} = raft_peer_rn:spawn_connector(Id, Opts, self()),
+  {Id, Pid} = spawn_connector(Id, Opts),
   SendFun = receive ?peer_connected(Id, F) -> F end,
   Msg = make_ref(),
   ok = SendFun(Msg),
@@ -49,7 +49,7 @@ stop_monitored_test() ->
 fail_to_connect_test() ->
   Name = tester,
   Id = ?PEER_ID(Name, 'foo@bar'),
-  {Id, Pid} = raft_peer_rn:spawn_connector(Id, [{retry_delay_ms, 0}], self()),
+  {Id, Pid} = spawn_connector(Id, [{retry_delay_ms, 0}]),
   receive ?peer_connected(_Id, _F) -> throw(unexpected) after 2000 -> ok end,
   ok = raft_peers:stop_connector(Pid),
   ok.
@@ -57,8 +57,12 @@ fail_to_connect_test() ->
 fail_to_connect_hideen_test() ->
   Name = tester,
   Id = ?PEER_ID(Name, 'foo@bar'),
-  {Id, Pid} = raft_peer_rn:spawn_connector(Id, [hidden], self()),
+  {Id, Pid} = spawn_connector(Id, [hidden]),
   receive ?peer_connected(_Id, _F) -> throw(unexpected) after 2 -> ok end,
   ok = raft_peers:stop_connector(Pid),
   ok.
 
+spawn_connector(PeerId, Opts) ->
+  MyId = my_id,
+  Parent = self(),
+  raft_peer_rn:spawn_connector(MyId, PeerId, Opts, Parent).

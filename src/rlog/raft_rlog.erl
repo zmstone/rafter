@@ -22,7 +22,7 @@ shutdown(Pid) -> gen_server:stop(Pid, normal, infinity).
 
 cfg_keys() -> raft_cl:cfg_keys() ++ [].
 
--spec get_last_lid(pid()) -> false | lid().
+-spec get_last_lid(pid()) -> lid().
 get_last_lid(Pid) ->
   gen_server:call(Pid, get_last_lid, infinity).
 

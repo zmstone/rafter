@@ -4,8 +4,8 @@
 -export([main/1]).
 -export_type([lid/0, index/0, epoch/0, wal/0, member_id/0]).
 
--type index() :: non_neg_integer().
--type epoch() :: non_neg_integer().
+-type index() :: integer().
+-type epoch() :: integer().
 -type lid() :: {epoch(), index()}.
 -type wal() :: binary().
 -type member_id() :: raft_peers:id().

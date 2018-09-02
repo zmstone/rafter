@@ -26,7 +26,7 @@
 -opaque cl() :: #{ cfg := cfg()
                  , fd := false | file:fd()
                  , fd_bytes := bytes()
-                 , last_lid := false | lid()
+                 , last_lid := lid()
                  }.
 
 -define(SUFFIX, "cl").
@@ -70,7 +70,7 @@ open(Dir, Cfg0) ->
       #{ cfg       => Cfg
        , fd        => false
        , fd_bytes  => 0
-       , last_lid  => false
+       , last_lid  => ?NO_PREV_LID
        , base_lids => []
        };
     [?LID(Epoch, LastBaseIndex) | _] = Lids ->
@@ -85,7 +85,7 @@ open(Dir, Cfg0) ->
        }
   end.
 
--spec get_last_lid(cl()) -> false | lid().
+-spec get_last_lid(cl()) -> lid().
 get_last_lid(#{last_lid := LastLid}) -> LastLid.
 
 -spec close(cl()) -> ok | {error, any()}.
@@ -176,7 +176,7 @@ find_base_lid([?LID(Epoch, BaseIndex) | Rest], Index) ->
     false -> ?LID(Epoch, BaseIndex)
   end.
 
-assert_lid(false, _, _) -> ok;
+assert_lid(?NO_PREV_LID, _, _) -> ok;
 assert_lid(?LID(LastEpoch, LastIndex), Epoch, Index) ->
   LastEpoch =< Epoch orelse erlang:error({non_monotonic_epoch, LastEpoch, Epoch}),
   LastIndex + 1 =:= Index orelse erlang:error({non_consecutive_index, LastIndex, Index}),
@@ -316,7 +316,7 @@ apply_defaults(Cfg) ->
   Defaults = #{?cl_seg_bytes => ?DEFAULT_SEG_BYTES},
   maps:merge(Defaults, Cfg).
 
-is_new_segment(#{last_lid := false, fd := Fd}, _Epoch) ->
+is_new_segment(#{last_lid := ?NO_PREV_LID, fd := Fd}, _Epoch) ->
   false = Fd, % assert
   true;
 is_new_segment(#{last_lid := ?LID(Last, _)}, Epoch) when Epoch > Last ->

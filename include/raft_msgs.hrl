@@ -12,6 +12,7 @@
 -define(vote_req(Id, Epoch, LastLid), {vote_req, Id, Epoch, LastLid}).
 -define(vote_rsp(Id, Epoch, IsGranted), {vote_rsp, Id, Epoch, IsGranted}).
 
+%% rlog: replicated log
 -define(rlog_req(Id, Epoch, Args), {rlog_req, Id, Epoch, Args}).
 -define(rlog_rsp(Id, Epoch, Result), {rlog_rsp, Id, Epoch, Result}).
 

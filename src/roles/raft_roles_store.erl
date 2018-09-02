@@ -23,10 +23,12 @@
 
 %%%*_/ APIs ====================================================================
 
--spec read(dir(), epoch()) -> state().
+-spec read(dir(), epoch()) -> not_found | state().
 read(Dir, Epoch) ->
-  {ok, Proplist} = file:consult(filename(Dir, Epoch)),
-  maps:from_list(Proplist).
+  case file:consult(filename(Dir, Epoch)) of
+    {ok, Proplist} -> maps:from_list(Proplist);
+    {error, enoent} -> not_found
+  end.
 
 -spec write(dir(), raft_roles:data()) -> ok.
 write(Dir, Data) ->

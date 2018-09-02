@@ -2,7 +2,10 @@
 -define(RAFT_INT_HRL, true).
 
 %% Log ID
+-define(NO_PREV_EPOCH, 0).
+-define(NO_PREV_INDEX, -1).
 -define(LID(Epoch, Index), {Epoch, Index}).
+-define(NO_PREV_LID, ?LID(?NO_PREV_EPOCH, ?NO_PREV_INDEX)).
 
 -define(log_debug(Fmt, Args), logger:debug(Fmt, Args)).
 -define(log_info(Fmt, Args),  logger:info(Fmt, Args)).

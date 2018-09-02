@@ -30,8 +30,6 @@
 -define(rlog_ok, rlog_ok).
 -define(rlog_mismatch(PrevLid), {rlog_mismatch, PrevLid}).
 
--define(VERY_FIRST_EPOCH, 0).
-
 -define(FMT_ARGS(D, Args), [maps:get(current_epoch, D), fmt_id(D) | Args]).
 -define(DBG(D, Fmt, Args), ?log_debug("[~p] ~s: " ++ Fmt, ?FMT_ARGS(D, Args))).
 -define(INF(D, Fmt, Args), ?log_info("[~p] ~s: " ++ Fmt, ?FMT_ARGS(D, Args))).
@@ -41,12 +39,14 @@
 -type member_id() :: raft:member_id().
 -type changing_member() :: ?none | {?add, member_id()} | {?del, member_id()}.
 -type cfg() :: map().
+-type lid() :: raft_rlog:lid().
 -type data() :: #{ changing_member := changing_member()
                  , current_epoch := ?not_initialized | epoch()
                  , leader_id := member_id()
                  , my_id := member_id()
                  , peers := raft_peers:peers()
                  , rlog_pid := pid()
+                 , last_lid := ?not_initialized | lid()
                  , stable_members := [member_id()]
                  , voted_for := ?none
                  , votes := [member_id()]
@@ -93,6 +93,7 @@ init(Cfg) ->
           , opts => Opts
           , peers => Peers
           , rlog_pid => Pid
+          , last_lid => ?not_initialized
           , stable_members => get_initial_members(PeerConnModule, Cfg)
           , voted_for => ?none
           , votes => []
@@ -352,29 +353,26 @@ handle_peer_down(PeerId, #{peers := Peers0, leader_id := LeaderId} = Data) ->
 data_dir(Cfg) -> maps:get(?data_dir, Cfg).
 
 -spec load_raft_state(data(), pid(), cfg()) -> data().
-load_raft_state(#{stable_members := Members0} = Data, RlogPid, Cfg) ->
+load_raft_state(#{stable_members := Members0} = Data0, RlogPid, Cfg) ->
   StateDir = filename:join([data_dir(Cfg), "states"]),
   ok = filelib:ensure_dir(filename:join(StateDir, "foo")),
-  case raft_rlog:get_last_lid(RlogPid) of
-    false ->
-      ?INF(Data, "No commit log found in ~s", [data_dir(Cfg)]),
-      %% no commit history, this is the initial state.
-      ok = raft_roles_store:ensure_deleted(StateDir, all),
-      Data#{current_epoch := ?VERY_FIRST_EPOCH};
-    ?LID(Epoch, _) ->
-      ?INF(Data, "Last epoch found in commit logs ~p", [Epoch]),
-      ok = raft_roles_store:ensure_deleted(StateDir, {except, Epoch}),
-      #{ voted_for := VotedFor
-       , stable_members := Members
-       , changing_member := ChangingMember
-       } = raft_roles_store:read(StateDir, Epoch),
+  LastLid = raft_rlog:get_last_lid(RlogPid),
+  ?LID(Epoch, _) = LastLid,
+  ok = raft_roles_store:ensure_deleted(StateDir, {except, Epoch}),
+  Data = Data0#{current_epoch := Epoch, last_lid := LastLid},
+  case raft_roles_store:read(StateDir, Epoch) of
+    not_found ->
+      Data;
+    #{ voted_for := VotedFor
+     , stable_members := Members
+     , changing_member := ChangingMember
+     } ->
       %% raft members may change dynamically
       %% the initial members in config file might have been
       %% outdated, use the members in raft state
       Members0 =:= Members orelse
         ?INF(Data, "Members loaded from raft store: ~p", [Members]),
-      Data#{ current_epoch := Epoch
-           , voted_for := VotedFor
+      Data#{ voted_for := VotedFor
            , stable_members := Members
            , changing_member := ChangingMember
            }

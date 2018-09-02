@@ -26,7 +26,7 @@ start([N]) when is_atom(N) ->
 start(N) when is_list(N) ->
   start(list_to_integer(N));
 start(N) when is_integer(N) ->
-  logger:set_primary_config(level, info),
+  logger:set_primary_config(level, debug),
   Ids = lists:map(fun make_id/1, lists:seq(1, N)),
   lists:map(fun(I) -> start_one(I, Ids) end, Ids).
 
