@@ -209,14 +209,14 @@ candidate(Type, Event, Data) ->
 leader(enter, OldState, #{my_id := MyId} = Data) ->
   ?candidate = OldState, %% assert
   ?INF(Data, "Elected!", []),
-  Msg = make_rlog_req(Data),
+  Msg = make_empty_rlog_req(Data),
   ok = broadcast(Data, Msg),
   {keep_state, Data#{leader_id := MyId}};
 leader(info, ?peer_connected(Id, SendFun),
        #{peers := Peers0} = Data0) ->
   Peers = raft_peers:peer_connected(Peers0, Id, SendFun),
   Data = Data0#{peers := Peers},
-  Msg = make_rlog_req(Data),
+  Msg = make_empty_rlog_req(Data),
   ok = cast(Data, Id, Msg),
   {keep_state, Data};
 leader(info, ?peer_down(PeerId), Data0) ->
@@ -245,7 +245,9 @@ leader(info, ?rlog_rsp(Id, _Epoch, ?rlog_mismatch(PrevLid)), Data) ->
 leader(Type, Event, Data) ->
   common(?leader, Type, Event, Data).
 
-common(_StateName, info, ?vote_req(Id, Epoch, _Lid), #{my_id := MyId} = Data0) ->
+common(StateName, info, ?vote_req(Id, Epoch, _Lid), #{my_id := MyId} = Data0) ->
+  % This clause is only for candidate or leader state.
+  true = (StateName =/= ?follower), %% assert
   {IsNewEpoch, Data} = maybe_update_epoch(Id, Epoch, Data0),
   case IsNewEpoch of
     true ->
@@ -296,22 +298,26 @@ handle_rlog_req(StateName, Data0, Id, Epoch, Args) ->
 
 handle_rlog_req_1(?follower, Data0, Id, Args) ->
   Data1 = maybe_update_leader(Id, Data0),
-  {Result, Data} = append_rlogs(Data1, Args),
+  {Result, Data} = handle_rlogs(Data1, Args),
   ok = cast_rlog_rsp(Data, Id, Result),
   {keep_state, Data};
 handle_rlog_req_1(?candidate, Data, _Id, _Args) ->
   %% new leader, handle this event at follower state
   next_state(?follower, Data, postpone);
-handle_rlog_req_1(?leader, Data, _Id, _Args) ->
-  %% new leader, I am outdated
-  %% step down and handle this event at follower state
+handle_rlog_req_1(?leader, Data, Id, _Args) ->
+  %% New leader is elected wihout me. I am outdated
+  %% Step down and handle this event at follower state
+  ?ERR(Data, "New leader ~p discoverd, stepping down", [Id]),
   do_step_down(Data, postpone).
 
-make_rlog_req(#{ my_id := MyId
-               , current_epoch := Epoch
-               } = Data) ->
+%% Make an empty log replication request
+%% This is a quick-announcement of leader
+make_empty_rlog_req(#{ my_id := MyId
+                     , current_epoch := Epoch
+                     } = Data) ->
   Args = #{ prev_lid => get_last_lid(Data)
           , commit_lid => get_last_committed_lid(Data)
+          , entries => []
           },
   ?rlog_req(MyId, Epoch, Args).
 
@@ -323,9 +329,21 @@ handle_rlog_mismatch(Data, _Id, _PrevLid) ->
   %% TODO
   {keep_state, Data}.
 
-append_rlogs(Data, _Args) ->
-  %% TODO
-  {?rlog_ok, Data}.
+handle_rlogs(#{rlog := Rlog0} = Data,
+             #{ prev_lid := PrevLid
+              , commit_lid := CommitLid
+              , entries := Entries
+              }) ->
+  case get_last_lid(Rlog0) =:= PrevLid of
+    true ->
+      Rlog1 = raft_rlog:append(Rlog0, Entries),
+      Rlog = raft_rlog:commit(Rlog1, CommitLid),
+      {?rlog_ok, Data#{rlog := Rlog}};
+    false ->
+      Rlog = raft_rlog:truncate(Rlog0, PrevLid),
+      MyPrevLid = get_last_lid(Rlog),
+      {?rlog_mismatch(MyPrevLid), Data#{rlog := Rlog}}
+  end.
 
 maybe_update_leader(Id, #{leader_id := ?none} = Data) ->
   ?INF(Data, "Discovered leader ~p", [Id]),

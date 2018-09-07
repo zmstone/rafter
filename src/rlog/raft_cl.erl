@@ -6,7 +6,7 @@
 -export([decode_entries/1]).
 -export([get_last_lid/1, cfg_keys/0]).
 
--export_type([cl/0, cfg_key/0]).
+-export_type([cl/0, cfg_key/0, entry/0]).
 
 -include("raft_int.hrl").
 -include("raft_cfg.hrl").
@@ -15,7 +15,7 @@
 -type index() :: raft:index().
 -type epoch() :: raft:epoch().
 -type bytes() :: non_neg_integer().
--type entry() :: raft_rlog:entry().
+-type entry() :: binary().
 
 -type filename() :: string().
 -type dir() :: filename().
