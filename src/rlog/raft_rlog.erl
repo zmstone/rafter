@@ -1,74 +1,64 @@
 %% @doc Raft replication log.
-%% A `gen_server' which manages `raft_cl' for committed log entries on disk,
-%% and `raft_lq' for entries in RAM waiting to be committed.
+%% A data structure for
+%% - `raft_cl': committed log entries on disk
+%% - `raft_lq' entries in RAM waiting to be committed
 
 -module(raft_rlog).
--behaviour(gen_server).
 
--export([start_link/2, cfg_keys/0, get_last_lid/1, shutdown/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3, terminate/2]).
--export([is_up_to_date/2]).
+-export([open/2, cfg_keys/0, get_last_lid/1, close/1, is_up_to_date/2]).
+
+-export_type([ rlog/0
+             , cfg_key/0
+             , cfg/0
+             ]).
 
 -include("raft_int.hrl").
 
--define(not_initialized, not_initialized).
-
 -type lid() :: raft:lid().
+-type my_cfg_key() :: 'TODO'.
+-type my_cfg() :: #{my_cfg_key() => term()}.
+-type cfg_key() :: my_cfg_key() | raft_cl:cfg_key().
+-type cfg() :: #{cfg_key() => term()}.
+-type dir() :: string().
+-opaque rlog() :: #{ cfg := my_cfg()
+                   , committed := raft_cl:cl()
+                   , dirty := raft_lq:lq()
+                   }.
 
-start_link(Dir, Cfg) ->
-  gen_server:start_link(?MODULE, {Dir, Cfg}, []).
+%% @doc Config keys for rlog.
+-spec cfg_keys() -> [raft_cl:cfg_key()].
+cfg_keys() -> raft_cl:cfg_keys() ++ my_cfg_keys().
 
-shutdown(Pid) -> gen_server:stop(Pid, normal, infinity).
+%% @doc Open.
+-spec open(dir(), cfg()) -> rlog().
+open(Dir, Cfg0) ->
+  ClCfg = maps:with(raft_cl:cfg_keys(), Cfg0),
+  MyCfg = maps:with(my_cfg_keys(), Cfg0),
+  Committed = raft_cl:open(Dir, ClCfg),
+  ?LID(_LastEpoch, LastIndex) = raft_cl:get_last_lid(Committed),
+  #{ cfg => MyCfg
+   , committed => Committed
+   , dirty => raft_lq:new(LastIndex + 1)
+   }.
 
-cfg_keys() -> raft_cl:cfg_keys() ++ [].
+%% @doc Close log file fd:s etc.
+-spec close(rlog()) -> ok.
+close(#{committed := Cl}) -> raft_cl:close(Cl).
 
--spec get_last_lid(pid()) -> lid().
-get_last_lid(Pid) ->
-  gen_server:call(Pid, get_last_lid, infinity).
+-spec get_last_lid(rlog()) -> lid().
+get_last_lid(#{committed := Committed, dirty := Dirty}) ->
+  case raft_lq:get_last_lid(Dirty) of
+    empty -> raft_cl:get_last_lid(Committed);
+    Lid -> Lid
+  end.
 
 %% @doc Return 'true' if other's last lid is up-to-date comparing to mine.
 -spec is_up_to_date(lid(), lid()) -> boolean().
 is_up_to_date(MyLid, OthersLid) ->
   MyLid =:= false orelse OthersLid >= MyLid.
 
-%%%*_/ gen_server callbacks ====================================================
-
-init({Dir, Cfg0}) ->
-  process_flag(trap_exit, true),
-  ClCfgKeys = raft_cl:cfg_keys(),
-  ClCfg = maps:with(ClCfgKeys, Cfg0),
-  MyCfg = maps:without(ClCfgKeys, Cfg0),
-  self() ! {do_init, Dir, ClCfg},
-  {ok, #{ cfg => MyCfg
-        , cl => ?not_initialized
-        , lq => ?not_initialized
-        }}.
-
-handle_info({do_init, Dir, ClCfg}, St) ->
-  Cl = raft_cl:open(Dir, ClCfg),
-  {noreply, St#{cl := Cl}};
-handle_info(Info, St) ->
-  ?log_debug("unknown info: ~p", [Info]),
-  {noreply, St}.
-
-handle_call(get_last_lid, _From, #{cl := Cl} = St) ->
-  Res = raft_cl:get_last_lid(Cl),
-  {reply, Res, St};
-handle_call(Call, _From, St) ->
-  ?log_debug("unknown call: ~p", [Call]),
-  {noreply, St}.
-
-handle_cast(Cast, St) ->
-  ?log_debug("unknown cast: ~p", [Cast]),
-  {noreply, St}.
-
-code_change(_OldVsn, St, _Extra) ->
-  {ok, St}.
-
-terminate(Reason, #{cl := Cl} = St) ->
-  ?log_debug("terminate reason: ~p", [Reason]),
-  ok = raft_cl:close(Cl),
-  {ok, St}.
-
 %%%*_/ internal functions ======================================================
+
+%% TODO
+my_cfg_keys() -> [].
 

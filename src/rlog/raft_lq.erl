@@ -2,41 +2,40 @@
 
 -module(raft_lq).
 
--export([new/2, in/2, out/1, to_list/1, bump_epoch/1]).
+-export([new/1, in/3, out/1, to_list/1, get_last_lid/1]).
 -export([count/1, is_empty/1]).
 
 -export_type([lq/0]).
 
 -include("raft_int.hrl").
 
+-define(ITEM(Lid, Entry), {Lid, Entry}).
+
 -type lid() :: raft:lid().
 -type epoch() :: raft:epoch().
 -type index() :: raft:index().  % non_neg_integer
 -type count() :: non_neg_integer().
--type entry() :: raft_rlog:entry().
--type item() :: {epoch(), raft_rlog:entry()}.
+-type entry() :: term().
+-type item() :: {epoch(), entry()}.
 
--opaque lq() :: #{ epoch   := epoch() % current epoch
-                 , f_index := index() % index for first item
+-opaque lq() :: #{ f_index := index() % index for first item
                  , n_index := index() % index for next item
                  , queue   := queue:queue(item())
                  }.
 
--spec new(epoch(), index()) -> lq().
-new(Epoch, Index) ->
+-spec new(index()) -> lq().
+new(Index) ->
   #{ f_index => Index
    , n_index => Index
-   , epoch   => Epoch
    , queue   => queue:new()
    }.
 
--spec in(entry(), lq()) -> lq().
-in(Entry, #{ n_index := N_Index
-           , epoch   := Epoch
-           , queue   := Queue
-           } = Q) ->
+-spec in(lq(), epoch(), entry()) -> lq().
+in(#{ n_index := N_Index
+    , queue   := Queue
+    } = Q, Epoch, Entry) ->
   Q#{ n_index := N_Index + 1
-    , queue   := queue:in(?LID(Epoch, Entry), Queue)
+    , queue   := queue:in(?ITEM(Epoch, Entry), Queue)
     }.
 
 -spec out(lq()) -> empty | {{lid(), entry()}, lq()}.
@@ -47,17 +46,13 @@ out(#{ f_index := F_Index
     true ->
       empty;
     false ->
-      {{value, {Epoch, Entry}}, NewQueue}= queue:out(Queue),
+      {{value, ?ITEM(Epoch, Entry)}, NewQueue}= queue:out(Queue),
       Result = {?LID(Epoch, F_Index), Entry},
       NewQ = Q#{ f_index := F_Index + 1
                , queue   := NewQueue
                },
       {Result, NewQ}
   end.
-
--spec bump_epoch(lq()) -> lq().
-bump_epoch(#{epoch := Epoch} = Q) ->
-  Q#{epoch => Epoch + 1}.
 
 -spec count(lq()) -> count().
 count(#{f_index := F, n_index := N}) -> N - F.
@@ -74,6 +69,13 @@ to_list(#{f_index := F_Index,
           n_index := N_Index,
           queue := Queue}) ->
   to_list(F_Index, N_Index, Queue, []).
+
+-spec get_last_lid(lq()) -> empty | lid().
+get_last_lid(#{n_index := N_Index, queue := Q}) ->
+  case queue:peek_r(Q) of
+    empty -> empty;
+    {value, ?ITEM(Epoch, _Entry)} -> ?LID(Epoch, N_Index - 1)
+  end.
 
 %%%*_/ internal functions ======================================================
 

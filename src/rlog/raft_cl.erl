@@ -6,7 +6,7 @@
 -export([decode_entries/1]).
 -export([get_last_lid/1, cfg_keys/0]).
 
--export_type([cl/0]).
+-export_type([cl/0, cfg_key/0]).
 
 -include("raft_int.hrl").
 -include("raft_cfg.hrl").
@@ -19,6 +19,8 @@
 
 -type filename() :: string().
 -type dir() :: filename().
+
+-type cfg_key() :: ?cl_seg_bytes.
 
 -type cfg() :: #{ ?cl_seg_bytes => bytes()
                 }.
@@ -57,7 +59,7 @@
           REST/binary>>).
 -define(V0_BODY_BYTES(Size), (Size + ?INDEX_BYTES)).
 
--spec cfg_keys() -> [atom()].
+-spec cfg_keys() -> [cfg_key()].
 cfg_keys() -> [?cl_seg_bytes].
 
 -spec open(dir(), cfg()) -> cl().

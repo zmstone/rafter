@@ -39,13 +39,14 @@
 -type member_id() :: raft:member_id().
 -type changing_member() :: ?none | {?add, member_id()} | {?del, member_id()}.
 -type cfg() :: map().
--type lid() :: raft_rlog:lid().
+-type lid() :: raft:lid().
+-type rlog() :: raft_rlog:rlog().
 -type data() :: #{ changing_member := changing_member()
                  , current_epoch := ?not_initialized | epoch()
                  , leader_id := member_id()
                  , my_id := member_id()
                  , peers := raft_peers:peers()
-                 , rlog_pid := pid()
+                 , rlog := raft_rlog:rlog()
                  , last_lid := ?not_initialized | lid()
                  , stable_members := [member_id()]
                  , voted_for := ?none
@@ -78,7 +79,6 @@ init(Cfg) ->
   MyId = raft_peers:unify_id(PeerConnModule, maps:get(?my_id, Cfg)),
   PeerConnOpts = maps:get(?peer_conn_opts, Cfg, []),
   Peers = raft_peers:init(PeerConnModule, MyId, PeerConnOpts),
-  {ok, Pid} = raft_rlog:start_link(data_dir(Cfg), Cfg),
   Base = maps:get(?election_timeout_base, Cfg, ?ELECTION_TIMEOUT_BASE),
   Rand = maps:get(?election_timeout_rand, Cfg, ?ELECTION_TIMEOUT_RAND),
   StatyDown = maps:get(?stay_down_timeout, Cfg, ?STAY_DOWN_TIMEOUT),
@@ -92,7 +92,7 @@ init(Cfg) ->
           , my_id => MyId
           , opts => Opts
           , peers => Peers
-          , rlog_pid => Pid
+          , rlog => ?not_initialized
           , last_lid => ?not_initialized
           , stable_members => get_initial_members(PeerConnModule, Cfg)
           , voted_for => ?none
@@ -101,10 +101,10 @@ init(Cfg) ->
   Action = {next_event, internal, {?load_raft_state, Cfg}},
   {ok, ?loading, Data, Action}.
 
-terminate(Reason, State, #{rlog_pid := RlogPid} = Data) ->
+terminate(Reason, State, #{rlog := Rlog} = Data) ->
   is_normal(Reason) orelse
     ?INF(Data, "Terminate at state ~p\nreason: ~p", [State, Reason]),
-  raft_rlog:shutdown(RlogPid),
+  Rlog =/= ?not_initialized andalso raft_rlog:close(Rlog),
   ok.
 
 code_change(_OldVsn, State, Data, _Extra) ->
@@ -116,9 +116,9 @@ code_change(_OldVsn, State, Data, _Extra) ->
 %% This is to avoid performing too much work in init function.
 loading(enter, _OldState, Data) ->
   {keep_state, Data};
-loading(internal, {?load_raft_state, Cfg},
-        #{rlog_pid := RlogPid} = Data0) ->
-  Data1 = load_raft_state(Data0, RlogPid, Cfg),
+loading(internal, {?load_raft_state, Cfg}, #{rlog := ?not_initialized} = Data0) ->
+  Rlog = raft_rlog:open(data_dir(Cfg), Cfg),
+  Data1 = load_raft_state(Data0#{rlog := Rlog}, Rlog, Cfg),
   Data = spawn_connectors(Data1),
   next_state(?follower, Data).
 %% Intended: do not call common/4 as 'default' for ?loading state.
@@ -352,11 +352,11 @@ handle_peer_down(PeerId, #{peers := Peers0, leader_id := LeaderId} = Data) ->
 
 data_dir(Cfg) -> maps:get(?data_dir, Cfg).
 
--spec load_raft_state(data(), pid(), cfg()) -> data().
-load_raft_state(#{stable_members := Members0} = Data0, RlogPid, Cfg) ->
+-spec load_raft_state(data(), rlog(), cfg()) -> data().
+load_raft_state(#{stable_members := Members0} = Data0, Rlog, Cfg) ->
   StateDir = filename:join([data_dir(Cfg), "states"]),
   ok = filelib:ensure_dir(filename:join(StateDir, "foo")),
-  LastLid = raft_rlog:get_last_lid(RlogPid),
+  LastLid = raft_rlog:get_last_lid(Rlog),
   ?LID(Epoch, _) = LastLid,
   ok = raft_roles_store:ensure_deleted(StateDir, {except, Epoch}),
   Data = Data0#{current_epoch := Epoch, last_lid := LastLid},
@@ -464,10 +464,8 @@ is_from_valid_peer(Id, Data) ->
   All = all_peer_ids(Data),
   lists:member(Id, All).
 
-get_last_lid(Pid) when is_pid(Pid) ->
-  raft_rlog:get_last_lid(Pid);
-get_last_lid(#{rlog_pid := Pid}) ->
-  get_last_lid(Pid).
+get_last_lid(#{rlog := Rlog}) -> get_last_lid(Rlog);
+get_last_lid(Rlog) -> raft_rlog:get_last_lid(Rlog).
 
 maybe_grant_vote(Id, Epoch, Lid, Data) ->
   case is_from_valid_peer(Id, Data) of
