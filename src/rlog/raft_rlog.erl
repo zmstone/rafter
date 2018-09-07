@@ -5,7 +5,8 @@
 
 -module(raft_rlog).
 
--export([open/2, cfg_keys/0, get_last_lid/1, close/1, is_up_to_date/2]).
+-export([open/2, close/1]).
+-export([cfg_keys/0, get_last_lid/1, get_last_committed_lid/1]).
 
 -export_type([ rlog/0
              , cfg_key/0
@@ -45,17 +46,18 @@ open(Dir, Cfg0) ->
 -spec close(rlog()) -> ok.
 close(#{committed := Cl}) -> raft_cl:close(Cl).
 
+%% @doc Return the id of last log entry.
 -spec get_last_lid(rlog()) -> lid().
-get_last_lid(#{committed := Committed, dirty := Dirty}) ->
+get_last_lid(#{dirty := Dirty} = Rlog) ->
   case raft_lq:get_last_lid(Dirty) of
-    empty -> raft_cl:get_last_lid(Committed);
+    empty -> get_last_committed_lid(Rlog);
     Lid -> Lid
   end.
 
-%% @doc Return 'true' if other's last lid is up-to-date comparing to mine.
--spec is_up_to_date(lid(), lid()) -> boolean().
-is_up_to_date(MyLid, OthersLid) ->
-  MyLid =:= false orelse OthersLid >= MyLid.
+%% @doc Return the id of last committed log entry.
+-spec get_last_committed_lid(rlog()) -> lid().
+get_last_committed_lid(#{committed := Committed}) ->
+  raft_cl:get_last_lid(Committed).
 
 %%%*_/ internal functions ======================================================
 

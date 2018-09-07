@@ -39,15 +39,13 @@
 -type member_id() :: raft:member_id().
 -type changing_member() :: ?none | {?add, member_id()} | {?del, member_id()}.
 -type cfg() :: map().
--type lid() :: raft:lid().
 -type rlog() :: raft_rlog:rlog().
 -type data() :: #{ changing_member := changing_member()
                  , current_epoch := ?not_initialized | epoch()
                  , leader_id := member_id()
                  , my_id := member_id()
                  , peers := raft_peers:peers()
-                 , rlog := raft_rlog:rlog()
-                 , last_lid := ?not_initialized | lid()
+                 , rlog := rlog()
                  , stable_members := [member_id()]
                  , voted_for := ?none
                  , votes := [member_id()]
@@ -93,7 +91,6 @@ init(Cfg) ->
           , opts => Opts
           , peers => Peers
           , rlog => ?not_initialized
-          , last_lid => ?not_initialized
           , stable_members => get_initial_members(PeerConnModule, Cfg)
           , voted_for => ?none
           , votes => []
@@ -118,7 +115,7 @@ loading(enter, _OldState, Data) ->
   {keep_state, Data};
 loading(internal, {?load_raft_state, Cfg}, #{rlog := ?not_initialized} = Data0) ->
   Rlog = raft_rlog:open(data_dir(Cfg), Cfg),
-  Data1 = load_raft_state(Data0#{rlog := Rlog}, Rlog, Cfg),
+  Data1 = load_raft_state(Data0#{rlog := Rlog}, Cfg),
   Data = spawn_connectors(Data1),
   next_state(?follower, Data).
 %% Intended: do not call common/4 as 'default' for ?loading state.
@@ -312,9 +309,9 @@ handle_rlog_req_1(?leader, Data, _Id, _Args) ->
 
 make_rlog_req(#{ my_id := MyId
                , current_epoch := Epoch
-               }) ->
-  Args = #{ prev_lid => todo
-          , commit_index => todo
+               } = Data) ->
+  Args = #{ prev_lid => get_last_lid(Data)
+          , commit_lid => get_last_committed_lid(Data)
           },
   ?rlog_req(MyId, Epoch, Args).
 
@@ -352,14 +349,13 @@ handle_peer_down(PeerId, #{peers := Peers0, leader_id := LeaderId} = Data) ->
 
 data_dir(Cfg) -> maps:get(?data_dir, Cfg).
 
--spec load_raft_state(data(), rlog(), cfg()) -> data().
-load_raft_state(#{stable_members := Members0} = Data0, Rlog, Cfg) ->
+-spec load_raft_state(data(), cfg()) -> data().
+load_raft_state(#{stable_members := Members0} = Data0, Cfg) ->
   StateDir = filename:join([data_dir(Cfg), "states"]),
   ok = filelib:ensure_dir(filename:join(StateDir, "foo")),
-  LastLid = raft_rlog:get_last_lid(Rlog),
-  ?LID(Epoch, _) = LastLid,
+  ?LID(Epoch, _) = get_last_lid(Data0),
   ok = raft_roles_store:ensure_deleted(StateDir, {except, Epoch}),
-  Data = Data0#{current_epoch := Epoch, last_lid := LastLid},
+  Data = Data0#{current_epoch := Epoch},
   case raft_roles_store:read(StateDir, Epoch) of
     not_found ->
       Data;
@@ -467,6 +463,9 @@ is_from_valid_peer(Id, Data) ->
 get_last_lid(#{rlog := Rlog}) -> get_last_lid(Rlog);
 get_last_lid(Rlog) -> raft_rlog:get_last_lid(Rlog).
 
+get_last_committed_lid(#{rlog := Rlog}) -> get_last_committed_lid(Rlog);
+get_last_committed_lid(Rlog) -> raft_rlog:get_last_committed_lid(Rlog).
+
 maybe_grant_vote(Id, Epoch, Lid, Data) ->
   case is_from_valid_peer(Id, Data) of
     true ->
@@ -493,9 +492,9 @@ maybe_grant_vote_2(Id, _Lid, #{voted_for := VotedFor} = Data) when VotedFor =/= 
   ?DBG(Data, "Reject vote request from ~p\n"
        "because I have already voted for ~p", [Id, VotedFor]),
   {false, Data};
-maybe_grant_vote_2(Id, Lid, Data0) ->
+maybe_grant_vote_2(Id, PeerLid, Data0) ->
   MyLid = get_last_lid(Data0),
-  case raft_rlog:is_up_to_date(MyLid, Lid) of
+  case is_up_to_date(PeerLid, MyLid) of
     true ->
       Data = Data0#{voted_for := Id},
       %% persist role state before replying vote request
@@ -507,7 +506,7 @@ maybe_grant_vote_2(Id, Lid, Data0) ->
     false ->
       ?DBG(Data0, "Reject vote request from ~p\n"
            "because replication log is not up-to-date lid=~p, my-lid=~p",
-           [Id, Lid, MyLid]),
+           [Id, PeerLid, MyLid]),
       {false, Data0}
   end.
 
@@ -531,5 +530,13 @@ compare_epoch(Others, Mine) ->
   case Others < Mine of
     true -> ?older;
     false -> ?newer
+  end.
+
+%% Return 'true' if other's last lid is up-to-date comparing to mine.
+is_up_to_date(?LID(PeerEpoch, PeerIndex), ?LID(MyEpoch, MyIndex)) ->
+  case compare_epoch(PeerEpoch, MyEpoch) of
+    ?same  -> PeerIndex >= MyIndex;
+    ?older -> false;
+    ?newer -> true
   end.
 
