@@ -3,7 +3,7 @@
 
 %% config entry names
 -define(data_dir, data_dir).
--define(cl_seg_bytes, cl_seg_bytes).
+-define(rlog_seg_bytes, rlog_seg_bytes).
 -define(my_id, my_id).
 -define(initial_members, initial_members).
 -define(peer_conn_module, peer_conn_module).

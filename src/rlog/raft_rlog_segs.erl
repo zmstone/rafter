@@ -1,12 +1,12 @@
-%% @doc Raft commit log.
--module(raft_cl).
+%% @doc Raft replication log segment files.
+-module(raft_rlog_segs).
 
 -export([open/2, close/1]).
--export([append/4, read/2, read/3]).
+-export([append/3, read/2, read/3]).
 -export([decode_entries/1]).
 -export([get_last_lid/1, cfg_keys/0]).
 
--export_type([cl/0, cfg_key/0, entry/0]).
+-export_type([segs/0, cfg_key/0, entry/0]).
 
 -include("raft_int.hrl").
 -include("raft_cfg.hrl").
@@ -20,18 +20,19 @@
 -type filename() :: string().
 -type dir() :: filename().
 
--type cfg_key() :: ?cl_seg_bytes.
+-type cfg_key() :: ?rlog_seg_bytes.
 
--type cfg() :: #{ ?cl_seg_bytes => bytes()
+-type cfg() :: #{ ?rlog_seg_bytes => bytes()
                 }.
 
--opaque cl() :: #{ cfg := cfg()
-                 , fd := false | file:fd()
-                 , fd_bytes := bytes()
-                 , last_lid := lid()
-                 }.
+-opaque segs() :: #{ cfg := cfg()
+                   , fd := false | file:fd()
+                   , fd_bytes := bytes()
+                   , last_lid := lid()
+                   , base_lids := [lid()]
+                   }.
 
--define(SUFFIX, "cl").
+-define(SUFFIX, "rlog").
 -define(DEFAULT_SEG_BYTES, 100 bsl 20). %% 100MB
 
 -define(LAYOUT_VSN, 0).
@@ -60,15 +61,14 @@
 -define(V0_BODY_BYTES(Size), (Size + ?INDEX_BYTES)).
 
 -spec cfg_keys() -> [cfg_key()].
-cfg_keys() -> [?cl_seg_bytes].
+cfg_keys() -> [?rlog_seg_bytes].
 
--spec open(dir(), cfg()) -> cl().
+-spec open(dir(), cfg()) -> segs().
 open(Dir, Cfg0) ->
   ok = filelib:ensure_dir(filename:join(Dir, "foo")),
   Cfg = apply_defaults(Cfg0#{dir => Dir}),
   case list_sort_truncate_files(Dir) of
     [] ->
-      %% no history, leave writer and last_lid uninitialized
       #{ cfg       => Cfg
        , fd        => false
        , fd_bytes  => 0
@@ -87,49 +87,56 @@ open(Dir, Cfg0) ->
        }
   end.
 
--spec get_last_lid(cl()) -> lid().
+-spec get_last_lid(segs()) -> lid().
 get_last_lid(#{last_lid := LastLid}) -> LastLid.
 
--spec close(cl()) -> ok | {error, any()}.
+-spec close(segs()) -> ok | {error, any()}.
 close(#{fd := false}) -> ok;
 close(#{fd := Fd}) -> file:close(Fd).
 
--spec append(cl(), epoch(), index(), entry()) -> cl().
-append(CL, Epoch, Index, Entry) ->
+-spec append(segs(), epoch(), [{index(), entry()}]) -> segs().
+append(Segs, Epoch, Entries) ->
   #{ cfg       := #{dir := Dir}
-   , last_lid  := LastLid
+   , last_lid  := ?LID(LastEpoch, LastIndex)
    , base_lids := BaseLids
-   } = CL,
-  ok = assert_lid(LastLid, Epoch, Index),
-  case is_new_segment(CL, Epoch) of
+   } = Segs,
+  LastEpoch =< Epoch orelse
+    erlang:error({non_monotonic_epoch, #{last => LastEpoch, got => Epoch}}),
+  {Index, _} = hd(Entries),
+  {NewLastLid, IoData} = encode_entries(LastIndex, Entries, []),
+  case is_new_segment(Segs, Epoch) of
     true ->
-      ok = close(CL),
+      ok = close(Segs),
       NextFilename = filename(Dir, Epoch, Index),
-      do_append(CL#{ fd := open_file(NextFilename)
-                   , fd_bytes := 0
-                   , base_lids := [?LID(Epoch, Index) | BaseLids]
-                   }, Epoch, Index, Entry);
+      do_append(Segs#{ fd := open_file(NextFilename)
+                     , fd_bytes := 0
+                     , base_lids := [?LID(Epoch, Index) | BaseLids]
+                     , last_lid := ?LID(Epoch, NewLastLid)
+                     }, IoData);
     false ->
-      do_append(CL, Epoch, Index, Entry)
+      do_append(Segs#{last_lid := ?LID(Epoch, NewLastLid)}, IoData)
   end.
 
+%% @doc Decode entries from binary.
 -spec decode_entries(binary()) -> [{index(), entry()}].
 decode_entries(Bin) ->
   decode_entries(Bin, []).
 
 %% @doc Read one entry, call @link decode_entries/2 to decode.
-read(CL, Index) -> read(CL, Index, _ChunkSize = 0).
+-spec read(segs(), index()) -> {epoch(), binary()}.
+read(Segs, Index) ->
+  read(Segs, Index, _ChunkSize = 0).
 
 %% @doc Read a chunk of entries, call @link decode_entries/2 to decode.
 %% The caller should ensure the index is in valid range,
 %% raise `error(empty | too_old | not_seen)' exception otherwise.
--spec read(cl(), index(), bytes()) -> {epoch(), binary()}.
-read(CL, Index, ChunkSize) ->
+-spec read(segs(), index(), bytes()) -> {epoch(), binary()}.
+read(Segs, Index, ChunkSize) ->
   #{ base_lids := BaseLids
    , last_lid := LastLid
    , cfg := #{dir := Dir}
    , fd := Fd
-   } = CL,
+   } = Segs,
   LastLid =:= false andalso error(empty),
   ?LID(LastEpoch, LastIndex) = LastLid,
   Index > LastIndex andalso error(not_seen),
@@ -144,6 +151,10 @@ read(CL, Index, ChunkSize) ->
   {Epoch, Chunk}.
 
 %%%*_/ internal functions ======================================================
+
+do_append(#{fd := Fd, fd_bytes := Bytes} = Segs, IoData) ->
+  ok = file:write(Fd, IoData),
+  Segs#{fd_bytes := Bytes + bytes(IoData)}.
 
 %% Create index file if this turns out too slow
 seek_and_read(File, Offset, ChunkSize) ->
@@ -178,18 +189,13 @@ find_base_lid([?LID(Epoch, BaseIndex) | Rest], Index) ->
     false -> ?LID(Epoch, BaseIndex)
   end.
 
-assert_lid(?NO_PREV_LID, _, _) -> ok;
-assert_lid(?LID(LastEpoch, LastIndex), Epoch, Index) ->
-  LastEpoch =< Epoch orelse erlang:error({non_monotonic_epoch, LastEpoch, Epoch}),
-  LastIndex + 1 =:= Index orelse erlang:error({non_consecutive_index, LastIndex, Index}),
-  ok.
-
-do_append(#{fd := Fd, fd_bytes := Bytes} = CL, Epoch, Index, Entry) ->
-  IoData = encode_entry(Index, Entry),
-  ok = file:write(Fd, IoData),
-  CL#{ fd_bytes := Bytes + bytes(IoData)
-     , last_lid := ?LID(Epoch, Index)
-     }.
+encode_entries(LastIndex, [], Acc) ->
+  {LastIndex, lists:reverse(Acc)};
+encode_entries(LastIndex, [{Index, Entry} | Rest], Acc0) ->
+  LastIndex + 1 =/= Index andalso LastIndex =/= ?NO_PREV_INDEX andalso
+    erlang:error({non_consecutive_index, #{last => LastIndex, got => Index}}),
+  Acc = [encode_entry(Index, Entry) | Acc0],
+  encode_entries(Index, Rest, Acc).
 
 encode_entry(Index, Entry) ->
   CRC = erlang:crc32(Entry),
@@ -273,7 +279,7 @@ maybe_truncate(File, Index) ->
       ok ->
         ok;
       {truncate, Pos, Reason} ->
-        ?log_warn("Truncating commit log ~s at position ~p, due to:\n~p",
+        ?log_warn("Truncating rlog ~s at position ~p, due to:\n~p",
                   [File, Pos, Reason]),
         {ok, _} = file:position(Fd, Pos),
         ok = file:truncate(Fd)
@@ -315,7 +321,7 @@ scan_entry(Fd, CRC, Size, ExpectedIndex) ->
   end.
 
 apply_defaults(Cfg) ->
-  Defaults = #{?cl_seg_bytes => ?DEFAULT_SEG_BYTES},
+  Defaults = #{?rlog_seg_bytes => ?DEFAULT_SEG_BYTES},
   maps:merge(Defaults, Cfg).
 
 is_new_segment(#{last_lid := ?NO_PREV_LID, fd := Fd}, _Epoch) ->
@@ -323,7 +329,7 @@ is_new_segment(#{last_lid := ?NO_PREV_LID, fd := Fd}, _Epoch) ->
   true;
 is_new_segment(#{last_lid := ?LID(Last, _)}, Epoch) when Epoch > Last ->
   true;
-is_new_segment(#{ cfg := #{?cl_seg_bytes := SegBytes}
+is_new_segment(#{ cfg := #{?rlog_seg_bytes := SegBytes}
                 , fd_bytes := FdBytes}, _Epoch) when FdBytes >= SegBytes ->
   true;
 is_new_segment(_, _) ->

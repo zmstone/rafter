@@ -1,7 +1,5 @@
-%% @doc Raft replication log.
-%% A data structure for
-%% - `raft_cl': committed log entries on disk
-%% - `raft_lq' entries in RAM waiting to be committed
+%% @doc This module manages an opaque structure
+%% of replication log and the commit cursor.
 
 -module(raft_rlog).
 
@@ -20,56 +18,53 @@
 -export_type([ rlog/0
              , cfg_key/0
              , cfg/0
+             , entry/0
              ]).
 
 -include("raft_int.hrl").
 
 -type lid() :: raft:lid().
--type my_cfg_key() :: 'TODO'.
+-type my_cfg_key() :: atom(). %% TODO: be specific
 -type my_cfg() :: #{my_cfg_key() => term()}.
--type cfg_key() :: my_cfg_key() | raft_cl:cfg_key().
+-type cfg_key() :: my_cfg_key() | raft_rlog_segs:cfg_key().
 -type cfg() :: #{cfg_key() => term()}.
 -type dir() :: string().
--type entry() :: {lid(), raft_cl:entry()}.
+-type entry() :: {lid(), raft_rlog_segs:entry()}.
 -opaque rlog() :: #{ cfg := my_cfg()
-                   , committed := raft_cl:cl()
-                   , dirty := raft_lq:lq()
+                   , segs := raft_rlog_segs:segs()
+                   , commit_lid :=  lid()
                    , committer := fun((lid()) -> ok)
                    }.
 
 %% @doc Config keys for rlog.
--spec cfg_keys() -> [raft_cl:cfg_key()].
-cfg_keys() -> raft_cl:cfg_keys() ++ my_cfg_keys().
+-spec cfg_keys() -> [raft_rlog_segs:cfg_key() | my_cfg_key()].
+cfg_keys() -> raft_rlog_segs:cfg_keys() ++ my_cfg_keys().
 
 %% @doc Open.
 -spec open(dir(), cfg()) -> rlog().
 open(Dir, Cfg0) ->
-  ClCfg = maps:with(raft_cl:cfg_keys(), Cfg0),
+  SegsCfg = maps:with(raft_rlog_segs:cfg_keys(), Cfg0),
   MyCfg = maps:with(my_cfg_keys(), Cfg0),
-  Committed = raft_cl:open(Dir, ClCfg),
-  ?LID(_LastEpoch, LastIndex) = raft_cl:get_last_lid(Committed),
+  Segs = raft_rlog_segs:open(Dir, SegsCfg),
+  ?LID(_LastEpoch, LastIndex) = raft_rlog_segs:get_last_lid(Segs),
   #{ cfg => MyCfg
-   , committed => Committed
-   , dirty => raft_lq:new(LastIndex + 1)
+   , segs => Segs
    , committer => fun(Lid) -> ?MODULE:do_commit(Dir, Lid) end
    }.
 
 %% @doc Close log file fd:s etc.
 -spec close(rlog()) -> ok.
-close(#{committed := Cl}) -> raft_cl:close(Cl).
+close(#{segs := Segs}) -> raft_rlog_segs:close(Segs).
 
 %% @doc Return the id of last log entry.
 -spec get_last_lid(rlog()) -> lid().
-get_last_lid(#{dirty := Dirty} = Rlog) ->
-  case raft_lq:get_last_lid(Dirty) of
-    empty -> get_last_committed_lid(Rlog);
-    Lid -> Lid
-  end.
+get_last_lid(#{segs := Segs}) ->
+  raft_rlog_segs:get_last_lid(Segs).
 
 %% @doc Return the id of last committed log entry.
 -spec get_last_committed_lid(rlog()) -> lid().
-get_last_committed_lid(#{committed := Committed}) ->
-  raft_cl:get_last_lid(Committed).
+get_last_committed_lid(#{commit_lid := Lid}) ->
+  Lid.
 
 %% @doc Append log entries.
 -spec append(rlog(), [entry()]) -> rlog().
@@ -79,7 +74,7 @@ append(Rlog, _) -> Rlog. %% TODO
 -spec commit(rlog(), lid()) -> rlog().
 commit(#{committer := F} = Rlog, Lid) ->
   ok = F(Lid),
-  Rlog.
+  Rlog#{commit_lid := Lid}.
 
 %%%*_/ internal functions ======================================================
 

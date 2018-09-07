@@ -111,6 +111,7 @@ stop_connector(Pid) ->
       ok
   after
     1000 ->
+      unlink(Pid),
       erlang:exit(Pid, kill),
       ok
   end.

@@ -12,7 +12,7 @@
 
 -define(PEER_ID(Name, Node), {Name, Node}).
 -define(DEFAULT_RETRY_DELAY_MS, 100).
--define(DEFAULT_FAILURE_LOG_INTERVAL, 10000).
+-define(DEFAULT_FAILURE_LOG_INTERVAL, 30000).
 -define(NO_TS, 0).
 
 -opaque id() :: atom() | ?PEER_ID(RegName :: atom(), NodeName :: atom()).

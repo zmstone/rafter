@@ -58,7 +58,7 @@ fail_to_connect_hideen_test() ->
   Name = tester,
   Id = ?PEER_ID(Name, 'foo@bar'),
   {Id, Pid} = spawn_connector(Id, [hidden]),
-  receive ?peer_connected(_Id, _F) -> throw(unexpected) after 2 -> ok end,
+  receive ?peer_connected(_Id, _F) -> throw(unexpected) after 2000 -> ok end,
   ok = raft_peers:stop_connector(Pid),
   ok.
 
