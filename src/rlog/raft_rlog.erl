@@ -29,7 +29,9 @@
 -type cfg_key() :: my_cfg_key() | raft_rlog_segs:cfg_key().
 -type cfg() :: #{cfg_key() => term()}.
 -type dir() :: string().
--type entry() :: {lid(), raft_rlog_segs:entry()}.
+-type epoch() :: raft:epoch().
+-type index() :: raft:index().
+-type entry() :: {index(), raft_rlog_segs:entry()}.
 -opaque rlog() :: #{ cfg := my_cfg()
                    , segs := raft_rlog_segs:segs()
                    , commit_lid :=  lid()
@@ -46,9 +48,9 @@ open(Dir, Cfg0) ->
   SegsCfg = maps:with(raft_rlog_segs:cfg_keys(), Cfg0),
   MyCfg = maps:with(my_cfg_keys(), Cfg0),
   Segs = raft_rlog_segs:open(Dir, SegsCfg),
-  ?LID(_LastEpoch, LastIndex) = raft_rlog_segs:get_last_lid(Segs),
   #{ cfg => MyCfg
    , segs => Segs
+   , commit_lid => read_commit_lid(Dir)
    , committer => fun(Lid) -> ?MODULE:do_commit(Dir, Lid) end
    }.
 
@@ -67,8 +69,11 @@ get_last_committed_lid(#{commit_lid := Lid}) ->
   Lid.
 
 %% @doc Append log entries.
--spec append(rlog(), [entry()]) -> rlog().
-append(Rlog, _) -> Rlog. %% TODO
+-spec append(rlog(), [{epoch(), [entry()]}]) -> rlog().
+append(Rlog, []) -> Rlog;
+append(Rlog, [{Epoch, Entries} | Rest]) ->
+  NewRlog = raft_rlog_segs:append(Rlog, Epoch, Entries),
+  append(NewRlog, Rest).
 
 %% @doc Commit log
 -spec commit(rlog(), lid()) -> rlog().
@@ -80,11 +85,20 @@ commit(#{committer := F} = Rlog, Lid) ->
 
 %% @hidden
 do_commit(Dir, Lid) ->
-  File = filname:join(Dir, "COMMIT"),
-  IoData = io_lib:format("~p\n", [Lid]),
+  File = commit_filename(Dir),
+  IoData = io_lib:format("~p.\n", [Lid]),
   TmpFile = File ++ ".tmp",
   ok = file:write_file(TmpFile, IoData),
   ok = file:rename(TmpFile, File).
+
+read_commit_lid(Dir) ->
+  File = commit_filename(Dir),
+  case file:consult(File) of
+    {ok, [Lid]} -> Lid;
+    {error, enoent} -> ?NO_PREV_LID
+  end.
+
+commit_filename(Dir) -> filename:join(Dir, "COMMIT").
 
 %% TODO
 my_cfg_keys() -> [].

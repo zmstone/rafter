@@ -1,9 +1,11 @@
 -ifndef(RAFT_INT_HRL).
 -define(RAFT_INT_HRL, true).
 
-%% Log ID
+%% {Epoch = 0, Index = 0} works as the very first log entry
+%% but actually a 'phony' which nver gets created
+%% Real log entry index starts from 1.
 -define(NO_PREV_EPOCH, 0).
--define(NO_PREV_INDEX, -1).
+-define(NO_PREV_INDEX, 0).
 -define(LID(Epoch, Index), {Epoch, Index}).
 -define(NO_PREV_LID, ?LID(?NO_PREV_EPOCH, ?NO_PREV_INDEX)).
 

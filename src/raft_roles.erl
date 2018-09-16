@@ -329,7 +329,7 @@ handle_rlog_mismatch(Data, _Id, _PrevLid) ->
   %% TODO
   {keep_state, Data}.
 
-handle_rlogs(#{rlog := Rlog0} = Data,
+handle_rlogs(#{rlog := Rlog0, current_epoch := Epoch} = Data,
              #{ prev_lid := PrevLid
               , commit_lid := CommitLid
               , entries := Entries
@@ -337,7 +337,7 @@ handle_rlogs(#{rlog := Rlog0} = Data,
   case get_last_lid(Rlog0) =:= PrevLid of
     true ->
       Rlog1 = raft_rlog:append(Rlog0, Entries),
-      Rlog = raft_rlog:commit(Rlog1, CommitLid),
+      Rlog = raft_rlog:commit(Rlog1, Epoch, CommitLid),
       {?rlog_ok, Data#{rlog := Rlog}};
     false ->
       Rlog = raft_rlog:truncate(Rlog0, PrevLid),

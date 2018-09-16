@@ -59,6 +59,11 @@
           INDEX:64/unsigned-integer,
           REST/binary>>).
 -define(V0_BODY_BYTES(Size), (Size + ?INDEX_BYTES)).
+-define(ASSERT(Expr, Error),
+        case Expr of
+          true -> ok;
+          false -> erlang:error(Error)
+        end).
 
 -spec cfg_keys() -> [cfg_key()].
 cfg_keys() -> [?rlog_seg_bytes].
@@ -100,8 +105,7 @@ append(Segs, Epoch, Entries) ->
    , last_lid  := ?LID(LastEpoch, LastIndex)
    , base_lids := BaseLids
    } = Segs,
-  LastEpoch =< Epoch orelse
-    erlang:error({non_monotonic_epoch, #{last => LastEpoch, got => Epoch}}),
+  ?ASSERT(LastEpoch =< Epoch, {non_monotonic_epoch, #{last => LastEpoch, got => Epoch}}),
   {Index, _} = hd(Entries),
   {NewLastLid, IoData} = encode_entries(LastIndex, Entries, []),
   case is_new_segment(Segs, Epoch) of
@@ -192,8 +196,7 @@ find_base_lid([?LID(Epoch, BaseIndex) | Rest], Index) ->
 encode_entries(LastIndex, [], Acc) ->
   {LastIndex, lists:reverse(Acc)};
 encode_entries(LastIndex, [{Index, Entry} | Rest], Acc0) ->
-  LastIndex + 1 =/= Index andalso LastIndex =/= ?NO_PREV_INDEX andalso
-    erlang:error({non_consecutive_index, #{last => LastIndex, got => Index}}),
+  ?ASSERT(LastIndex + 1 =:= Index, {non_consecutive_index, #{last => LastIndex, got => Index}}),
   Acc = [encode_entry(Index, Entry) | Acc0],
   encode_entries(Index, Rest, Acc).
 
@@ -203,7 +206,7 @@ encode_entry(Index, Entry) ->
   ?V0_LOG(CRC, Size, Entry, Index).
 
 decode_entries(?V0_LOG_TAIL(CRC, Size, Entry, Index, Rest), Acc) ->
-  CRC =:= erlang:crc32(Entry) orelse erlang:error(bad_crc),
+  ?ASSERT(CRC =:= erlang:crc32(Entry), bad_crc),
   decode_entries(Rest, [{Index, Entry} | Acc]);
 decode_entries(<<V:8, _/binary>>, _Acc) ->
   erlang:error({bad_layout_vsn, V});
@@ -324,9 +327,6 @@ apply_defaults(Cfg) ->
   Defaults = #{?rlog_seg_bytes => ?DEFAULT_SEG_BYTES},
   maps:merge(Defaults, Cfg).
 
-is_new_segment(#{last_lid := ?NO_PREV_LID, fd := Fd}, _Epoch) ->
-  false = Fd, % assert
-  true;
 is_new_segment(#{last_lid := ?LID(Last, _)}, Epoch) when Epoch > Last ->
   true;
 is_new_segment(#{ cfg := #{?rlog_seg_bytes := SegBytes}

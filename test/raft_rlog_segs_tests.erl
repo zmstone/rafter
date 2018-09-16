@@ -20,37 +20,45 @@ append_read_test_() ->
   [{"open empty",
     ?WITH_TMP_DIR(Dir,
       begin
+        Epoch = 1,
+        Index = 1,
         Rlog0 = open(Dir, #{?rlog_seg_bytes => 10}),
-        Rlog1 = append(Rlog0, 0, 0, <<0, 0, 0>>),
-        Rlog2 = append(Rlog1, 0, 1, <<0, 0, 0>>),
-        {Epoch, Bin} = ?MOD:read(Rlog2, 0, 10),
-        ?assertEqual(0, Epoch),
-        ?assertEqual([{0, <<0, 0, 0>>}], decode_entries(Bin)),
+        io:format(user, "~p\n", [Rlog0]),
+        %% Not allowed to start from 0
+        ?assertError({non_consecutive_index,#{got := 0, last := 0}},
+                     append(Rlog0, Epoch, 0, <<0>>)),
+        Rlog1 = append(Rlog0, Epoch, Index, <<0, 0, 0>>),
+        Rlog2 = append(Rlog1, Epoch, Index + 1, <<0, 0, 0>>),
+        {Epoch, Bin} = ?MOD:read(Rlog2, Index, 10),
+        ?assertEqual([{Index, <<0, 0, 0>>}], decode_entries(Bin)),
         close(Rlog2)
       end)
    },
    {"open existing",
     ?WITH_TMP_DIR(Dir,
       begin
+        Epoch = 1,
+        Index = 1,
         Entry = binary:copy(<<0>>, 10),
         Cfg = #{?rlog_seg_bytes => 50},
         Rlog0 = open(Dir, Cfg),
-        Rlog1 = append(Rlog0, 0, 0, Entry),
+        Rlog1 = append(Rlog0, Epoch, Index, Entry),
         ok = close(Rlog1),
         Rlog2 = open(Dir, Cfg),
-        Rlog3 = append(Rlog2, 0, 1, Entry),
-        {0, Bin1} = read(Rlog3, 0),
-        ?assertEqual([{0, Entry}], decode_entries(Bin1)),
-        {0, Bin2} = read(Rlog3, 1),
-        ?assertEqual([{1, Entry}], decode_entries(Bin2)),
-        Rlog4 = append(Rlog3, 3, 2, <<"foo">>),
-        Rlog5 = append(Rlog4, 3, 3, <<"bar">>),
-        {0, Bin1} = read(Rlog5, 0),
-        {0, Bin2} = read(Rlog5, 1),
-        {3, Bin3} = read(Rlog5, 2),
-        {3, Bin4} = read(Rlog5, 2, 999999999),
-        ?assertEqual([{2, <<"foo">>}], decode_entries(Bin3)),
-        ?assertEqual([{2, <<"foo">>}, {3, <<"bar">>}], decode_entries(Bin4)),
+        Rlog3 = append(Rlog2, Epoch, Index + 1, Entry),
+        {Epoch, Bin1} = read(Rlog3, Index),
+        ?assertEqual([{Index, Entry}], decode_entries(Bin1)),
+        {Epoch, Bin2} = read(Rlog3, Index + 1),
+        ?assertEqual([{Index + 1, Entry}], decode_entries(Bin2)),
+        Rlog4 = append(Rlog3, Epoch + 2, Index + 2, <<"foo">>),
+        Rlog5 = append(Rlog4, Epoch + 2, Index + 3, <<"bar">>),
+        {_, Bin1} = read(Rlog5, Index),
+        {_, Bin2} = read(Rlog5, Index + 1),
+        {_, Bin3} = read(Rlog5, Index + 2),
+        {_, Bin4} = read(Rlog5, Index + 2, 999999999),
+        ?assertEqual([{Index + 2, <<"foo">>}], decode_entries(Bin3)),
+        ?assertEqual([{Index + 2, <<"foo">>}, {Index + 3, <<"bar">>}],
+                     decode_entries(Bin4)),
         ok = close(Rlog4)
       end)
    }
@@ -61,47 +69,49 @@ truncate_incomplete_header_test() ->
   begin
     Epoch = 4,
     Rlog0 = open(Dir, #{}),
-    Rlog1 = append(Rlog0, Epoch, 0, <<"foo">>),
+    Rlog1 = append(Rlog0, Epoch, 1, <<"foo">>),
     Fd = maps:get(fd, Rlog1),
     file:write(Fd, <<1>>),
     ok = close(Rlog1),
     Rlog2 = open(Dir, #{}),
-    {Epoch, Bin1} = read(Rlog2, 0, 2),
-    ?assertEqual([{0, <<"foo">>}], decode_entries(Bin1))
+    {Epoch, Bin1} = read(Rlog2, 1, 2),
+    ?assertEqual([{1, <<"foo">>}], decode_entries(Bin1))
   end)().
 
 truncate_incomplete_body_test() ->
   ?WITH_TMP_DIR(Dir,
   begin
     Epoch = 4,
+    Index = 1,
     Rlog0 = open(Dir, #{}),
-    Rlog1 = append(Rlog0, Epoch, 0, <<"foo">>),
-    Rlog2 = append(Rlog1, Epoch, 1, <<"bar">>),
+    Rlog1 = append(Rlog0, Epoch, Index, <<"foo">>),
+    Rlog2 = append(Rlog1, Epoch, Index + 1, <<"bar">>),
     Fd = maps:get(fd, Rlog2),
     {ok, _} = file:position(Fd, {cur, -1}),
     ok = file:truncate(Fd),
     ok = close(Rlog2),
     Rlog3 = open(Dir, #{}),
-    {Epoch, Bin1} = read(Rlog3, 0, 2),
-    ?assertEqual([{0, <<"foo">>}], decode_entries(Bin1))
+    {Epoch, Bin1} = read(Rlog3, Index, 2),
+    ?assertEqual([{Index, <<"foo">>}], decode_entries(Bin1))
   end)().
 
 truncate_empty_body_test() ->
   ?WITH_TMP_DIR(Dir,
   begin
     Epoch = 4,
+    Index = 1,
     Rlog0 = open(Dir, #{}),
-    Rlog1 = append(Rlog0, Epoch, 0, <<"foo">>),
-    Rlog2 = append(Rlog1, Epoch, 1, <<"bar">>),
+    Rlog1 = append(Rlog0, Epoch, Index, <<"foo">>),
+    Rlog2 = append(Rlog1, Epoch, Index + 1, <<"bar">>),
     Fd = maps:get(fd, Rlog2),
     FakeHeader = <<0:8/unsigned-integer,
-                  0:32/unsigned-integer,
-                  1:32/unsigned-integer>>,
+                   0:32/unsigned-integer,
+                   1:32/unsigned-integer>>,
     ok = file:write(Fd, FakeHeader),
     ok = close(Rlog2),
     Rlog3 = open(Dir, #{}),
-    {Epoch, Bin1} = read(Rlog3, 0, 2),
-    ?assertEqual([{0, <<"foo">>}], decode_entries(Bin1))
+    {Epoch, Bin1} = read(Rlog3, Index, 2),
+    ?assertEqual([{Index, <<"foo">>}], decode_entries(Bin1))
   end)().
 
 truncate_to_empty_test() ->
