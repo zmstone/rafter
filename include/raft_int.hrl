@@ -1,13 +1,13 @@
 -ifndef(RAFT_INT_HRL).
 -define(RAFT_INT_HRL, true).
 
-%% {Epoch = 0, Index = 0} works as the very first log entry
+%% {Gnr = 0, Idx = 0} works as the very first log entry
 %% but actually a 'phony' which nver gets created
 %% Real log entry index starts from 1.
--define(NO_PREV_EPOCH, 0).
--define(NO_PREV_INDEX, 0).
--define(LID(Epoch, Index), {Epoch, Index}).
--define(NO_PREV_LID, ?LID(?NO_PREV_EPOCH, ?NO_PREV_INDEX)).
+-define(NO_PREV_GNR, 0).
+-define(NO_PREV_IDX, 0).
+-define(LID(Gnr, Idx), {Gnr, Idx}).
+-define(NO_PREV_LID, ?LID(?NO_PREV_GNR, ?NO_PREV_IDX)).
 
 -define(log_debug(Fmt, Args), logger:debug(Fmt, Args)).
 -define(log_info(Fmt, Args),  logger:info(Fmt, Args)).

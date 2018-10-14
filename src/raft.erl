@@ -2,11 +2,11 @@
 
 -export([start/1, start_link/1, shutdown/1]).
 -export([main/1]).
--export_type([lid/0, index/0, epoch/0, wal/0, member_id/0]).
+-export_type([lid/0, idx/0, gnr/0, wal/0, member_id/0]).
 
--type index() :: integer().
--type epoch() :: integer().
--type lid() :: {epoch(), index()}.
+-type idx() :: integer().
+-type gnr() :: integer().
+-type lid() :: {gnr(), idx()}.
 -type wal() :: binary().
 -type member_id() :: raft_peers:id().
 

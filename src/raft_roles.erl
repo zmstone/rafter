@@ -30,18 +30,18 @@
 -define(rlog_ok, rlog_ok).
 -define(rlog_mismatch(PrevLid), {rlog_mismatch, PrevLid}).
 
--define(FMT_ARGS(D, Args), [maps:get(current_epoch, D), fmt_id(D) | Args]).
+-define(FMT_ARGS(D, Args), [maps:get(current_gnr, D), fmt_id(D) | Args]).
 -define(DBG(D, Fmt, Args), ?log_debug("[~p] ~s: " ++ Fmt, ?FMT_ARGS(D, Args))).
 -define(INF(D, Fmt, Args), ?log_info("[~p] ~s: " ++ Fmt, ?FMT_ARGS(D, Args))).
 -define(ERR(D, Fmt, Args), ?log_error("[~p] ~s: " ++ Fmt, ?FMT_ARGS(D, Args))).
 
--type epoch() :: raft:epoch().
+-type gnr() :: raft:gnr().
 -type member_id() :: raft:member_id().
 -type changing_member() :: ?none | {?add, member_id()} | {?del, member_id()}.
 -type cfg() :: map().
 -type rlog() :: raft_rlog:rlog().
 -type data() :: #{ changing_member := changing_member()
-                 , current_epoch := ?not_initialized | epoch()
+                 , current_gnr := ?not_initialized | gnr()
                  , leader_id := member_id()
                  , my_id := member_id()
                  , peers := raft_peers:peers()
@@ -85,7 +85,7 @@ init(Cfg) ->
           , stay_down_timeout => StatyDown
           },
   Data = #{ changing_member => ?none
-          , current_epoch => ?not_initialized
+          , current_gnr => ?not_initialized
           , leader_id => ?none
           , my_id => MyId
           , opts => Opts
@@ -142,10 +142,10 @@ follower(state_timeout, Timeout, #{leader_id := ?none} = Data) ->
 follower(state_timeout, _Timeout, Data) ->
   %% discard because we have leader present
   {keep_state, Data};
-follower(info, ?vote_req(Id, Epoch0, Lid), Data0) ->
-  {IsGranted, Data} = maybe_grant_vote(Id, Epoch0, Lid, Data0),
-  #{my_id := MyId, current_epoch := Epoch} = Data,
-  ok = cast(Data, Id, ?vote_rsp(MyId, Epoch, IsGranted)),
+follower(info, ?vote_req(Id, Gnr0, Lid), Data0) ->
+  {IsGranted, Data} = maybe_grant_vote(Id, Gnr0, Lid, Data0),
+  #{my_id := MyId, current_gnr := Gnr} = Data,
+  ok = cast(Data, Id, ?vote_rsp(MyId, Gnr, IsGranted)),
   {keep_state, Data};
 follower(info, ?peer_connected(Id, SendFun),
          #{peers := Peers0, leader_id := ?none} = Data0) ->
@@ -170,20 +170,20 @@ follower(info, ?peer_down(PeerId), #{leader_id := LeaderId} = Data0) ->
     true -> {repeat_state, Data#{leader_id := ?none}};
     false -> {keep_state, Data}
   end;
-follower(info, ?step_down(Id, Epoch),
-         #{leader_id := Id, current_epoch := Epoch} = Data) ->
+follower(info, ?step_down(Id, Gnr),
+         #{leader_id := Id, current_gnr := Gnr} = Data) ->
   {repeat_state, Data};
 follower(Type, Event, Data) ->
   common(?follower, Type, Event, Data).
 
 candidate(enter, _OldState, Data0) ->
-  Data = bump_epoch_and_vote_to_self(Data0),
+  Data = bump_gnr_and_vote_to_self(Data0),
   ok = send_vote_request_to_peers(Data),
   Timeout = get_election_timeout(Data),
   Action = {state_timeout, Timeout, Timeout},
   {keep_state, Data, Action};
-candidate(info, ?vote_rsp(Id, Epoch, _IsGranted = true),
-          #{current_epoch := Epoch} = Data0) ->
+candidate(info, ?vote_rsp(Id, Gnr, _IsGranted = true),
+          #{current_gnr := Gnr} = Data0) ->
   Data = vote_granted(Data0, Id),
   {VoteCount, MemberCount} = count_votes(Data),
   ?DBG(Data0, "Received vote from ~p, ~p/~p.", [Id, VoteCount, MemberCount]),
@@ -192,7 +192,7 @@ candidate(info, ?vote_rsp(Id, Epoch, _IsGranted = true),
     false -> {keep_state, Data}
   end;
 candidate(state_timeout, Timeout, Data) ->
-  ?DBG(Data, "Failed to elect a leader in ~p ms, try next epoch", [Timeout]),
+  ?DBG(Data, "Failed to elect a leader in ~p ms, try next generation", [Timeout]),
   {repeat_state, Data};
 candidate(info, ?peer_down(PeerId), Data0) ->
   Data = handle_peer_down(PeerId, Data0),
@@ -227,60 +227,60 @@ leader(info, ?peer_down(PeerId), Data0) ->
       ?ERR(Data, "Lost connection to majority, stepping down", []),
       do_step_down(Data, [])
   end;
-leader(info, ?vote_rsp(Id, Epoch, _IsGranted = true),
-       #{current_epoch := Epoch} = Data0) ->
+leader(info, ?vote_rsp(Id, Gnr, _IsGranted = true),
+       #{current_gnr := Gnr} = Data0) ->
   Data = vote_granted(Data0, Id),
   {VoteCount, MemberCount} = count_votes(Data),
   ?DBG(Data0, "Received vote from ~p, ~p/~p.", [Id, VoteCount, MemberCount]),
   {keep_state, Data};
-leader(info, ?rlog_rsp(Id, Epoch, ?outdated), Data0) ->
-  {IsNewEpoch, Data} = maybe_update_epoch(Id, Epoch, Data0),
-  IsNewEpoch = true, %% assert
-  ?INF(Data, "Higher epoch [~p] from ~p, stepping down", [Epoch, Id]),
+leader(info, ?rlog_rsp(Id, Gnr, ?outdated), Data0) ->
+  {IsNewGnr, Data} = maybe_update_gnr(Id, Gnr, Data0),
+  IsNewGnr = true, %% assert
+  ?INF(Data, "Higher generation [~p] from ~p, stepping down", [Gnr, Id]),
   do_step_down(Data, []);
-leader(info, ?rlog_rsp(Id, _Epoch, ?rlog_ok), Data) ->
+leader(info, ?rlog_rsp(Id, _Gnr, ?rlog_ok), Data) ->
   handle_rlog_ok(Data, Id);
-leader(info, ?rlog_rsp(Id, _Epoch, ?rlog_mismatch(PrevLid)), Data) ->
+leader(info, ?rlog_rsp(Id, _Gnr, ?rlog_mismatch(PrevLid)), Data) ->
   handle_rlog_mismatch(Data, Id, PrevLid);
 leader(Type, Event, Data) ->
   common(?leader, Type, Event, Data).
 
-common(StateName, info, ?vote_req(Id, Epoch, _Lid), #{my_id := MyId} = Data0) ->
+common(StateName, info, ?vote_req(Id, Gnr, _Lid), #{my_id := MyId} = Data0) ->
   % This clause is only for candidate or leader state.
   true = (StateName =/= ?follower), %% assert
-  {IsNewEpoch, Data} = maybe_update_epoch(Id, Epoch, Data0),
-  case IsNewEpoch of
+  {IsNewGnr, Data} = maybe_update_gnr(Id, Gnr, Data0),
+  case IsNewGnr of
     true ->
-      ?DBG(Data0, "Higher epoch found from ~p (~p), stepping down", [Id, Epoch]),
+      ?DBG(Data0, "Higher generation found from ~p (~p), stepping down", [Id, Gnr]),
       %% no response here, postpone it to follower state
       next_state(?follower, Data, postpone);
     false ->
-      ok = cast(Data, Id, ?vote_rsp(MyId, Epoch, _IsGranted = false)),
+      ok = cast(Data, Id, ?vote_rsp(MyId, Gnr, _IsGranted = false)),
       ?DBG(Data, "Discarded vote request from ~p", [Id]),
       {keep_state, Data}
   end;
-common(_StateName, info, ?vote_rsp(Id, Epoch, _IsGranted), Data0) ->
-  {IsNewEpoch, Data} = maybe_update_epoch(Id, Epoch, Data0),
-  case IsNewEpoch of
+common(_StateName, info, ?vote_rsp(Id, Gnr, _IsGranted), Data0) ->
+  {IsNewGnr, Data} = maybe_update_gnr(Id, Gnr, Data0),
+  case IsNewGnr of
     true ->
       next_state(?follower, Data);
     false ->
       ?DBG(Data, "Discarded vote response from ~p", [Id]),
       {keep_state, Data}
   end;
-common(_StateName, info, ?step_down(Id, Epoch), Data) ->
-  ?DBG(Data, "At ~p state discarded step_down message from ~p [~p]", [Id, Epoch]),
+common(_StateName, info, ?step_down(Id, Gnr), Data) ->
+  ?DBG(Data, "At ~p state discarded step_down message from ~p [~p]", [Id, Gnr]),
   {keep_state, Data};
-common(StateName, info, ?rlog_req(Id, LeaderEpoch, Args),
-       #{current_epoch := Epoch} = Data) ->
-  case compare_epoch(LeaderEpoch, Epoch) of
+common(StateName, info, ?rlog_req(Id, LeaderGnr, Args),
+       #{current_gnr := Gnr} = Data) ->
+  case compare_gnr(LeaderGnr, Gnr) of
     ?older ->
       %% an outdated leader is trying to replicate log to me,
-      %% ignore and tell it to update epoch
+      %% ignore and tell it to update generation number
       ok = cast_rlog_rsp(Data, Id, ?outdated),
       {keep_state, Data};
     _ ->
-      handle_rlog_req(StateName, Data, Id, LeaderEpoch, Args)
+      handle_rlog_req(StateName, Data, Id, LeaderGnr, Args)
   end;
 common(StateName, Type, Event, Data) ->
   ?INF(Data, "Event {~p, ~p} discarded at ~p state", [Type, Event, StateName]),
@@ -288,12 +288,12 @@ common(StateName, Type, Event, Data) ->
 
 %%%*_/ Internals ===============================================================
 
-do_step_down(#{my_id := MyId, current_epoch := Epoch} = Data, Action) ->
-  ok = broadcast(Data, ?step_down(MyId, Epoch)),
+do_step_down(#{my_id := MyId, current_gnr := Gnr} = Data, Action) ->
+  ok = broadcast(Data, ?step_down(MyId, Gnr)),
   next_state(?follower, Data, Action).
 
-handle_rlog_req(StateName, Data0, Id, Epoch, Args) ->
-  {_IsNewEpoch, Data} = maybe_update_epoch(Id, Epoch, Data0),
+handle_rlog_req(StateName, Data0, Id, Gnr, Args) ->
+  {_IsNewGnr, Data} = maybe_update_gnr(Id, Gnr, Data0),
   handle_rlog_req_1(StateName, Data, Id, Args).
 
 handle_rlog_req_1(?follower, Data0, Id, Args) ->
@@ -313,13 +313,13 @@ handle_rlog_req_1(?leader, Data, Id, _Args) ->
 %% Make an empty log replication request
 %% This is a quick-announcement of leader
 make_empty_rlog_req(#{ my_id := MyId
-                     , current_epoch := Epoch
+                     , current_gnr := Gnr 
                      } = Data) ->
   Args = #{ prev_lid => get_last_lid(Data)
           , commit_lid => get_last_committed_lid(Data)
           , entries => []
           },
-  ?rlog_req(MyId, Epoch, Args).
+  ?rlog_req(MyId, Gnr, Args).
 
 handle_rlog_ok(Data, _Id) ->
   %% TODO
@@ -329,7 +329,7 @@ handle_rlog_mismatch(Data, _Id, _PrevLid) ->
   %% TODO
   {keep_state, Data}.
 
-handle_rlogs(#{rlog := Rlog0, current_epoch := Epoch} = Data,
+handle_rlogs(#{rlog := Rlog0, current_gnr := Gnr} = Data,
              #{ prev_lid := PrevLid
               , commit_lid := CommitLid
               , entries := Entries
@@ -337,7 +337,7 @@ handle_rlogs(#{rlog := Rlog0, current_epoch := Epoch} = Data,
   case get_last_lid(Rlog0) =:= PrevLid of
     true ->
       Rlog1 = raft_rlog:append(Rlog0, Entries),
-      Rlog = raft_rlog:commit(Rlog1, Epoch, CommitLid),
+      Rlog = raft_rlog:commit(Rlog1, Gnr, CommitLid),
       {?rlog_ok, Data#{rlog := Rlog}};
     false ->
       Rlog = raft_rlog:truncate(Rlog0, PrevLid),
@@ -352,10 +352,10 @@ maybe_update_leader(Id, #{leader_id := OldLeader} = Data) ->
   ?INF(Data, "New leader ~p replacing old leader ~p", [Id, OldLeader]),
   Data#{leader_id := Id}.
 
-cast_rlog_rsp(#{ current_epoch := Epoch
+cast_rlog_rsp(#{ current_gnr := Gnr
                , my_id := Id
                } = Data, PeerId, Result) ->
-  cast(Data, PeerId, ?rlog_rsp(Id, Epoch, Result)).
+  cast(Data, PeerId, ?rlog_rsp(Id, Gnr, Result)).
 
 handle_peer_down(PeerId, #{peers := Peers0, leader_id := LeaderId} = Data) ->
   case PeerId =:= LeaderId of
@@ -371,10 +371,10 @@ data_dir(Cfg) -> maps:get(?data_dir, Cfg).
 load_raft_state(#{stable_members := Members0} = Data0, Cfg) ->
   StateDir = filename:join([data_dir(Cfg), "states"]),
   ok = filelib:ensure_dir(filename:join(StateDir, "foo")),
-  ?LID(Epoch, _) = get_last_lid(Data0),
-  ok = raft_roles_store:ensure_deleted(StateDir, {except, Epoch}),
-  Data = Data0#{current_epoch := Epoch},
-  case raft_roles_store:read(StateDir, Epoch) of
+  ?LID(Gnr, _) = get_last_lid(Data0),
+  ok = raft_roles_store:ensure_deleted(StateDir, {except, Gnr}),
+  Data = Data0#{current_gnr := Gnr},
+  case raft_roles_store:read(StateDir, Gnr) of
     not_found ->
       Data;
     #{ voted_for := VotedFor
@@ -432,23 +432,23 @@ is_majority_present(#{peers := Peers}) ->
 
 fmt_id(#{my_id := Id}) -> io_lib:format("~p", [Id]).
 
-bump_epoch_and_vote_to_self(#{ my_id := MyId
-                             , current_epoch := Epoch
-                             } = Data0) ->
-  NewEpoch = Epoch + 1,
-  ?DBG(Data0, "Bumpped epoch to ~p", [NewEpoch]),
-  self() ! ?vote_rsp(MyId, NewEpoch, true),
-  Data = Data0#{ current_epoch := NewEpoch
+bump_gnr_and_vote_to_self(#{ my_id := MyId
+                           , current_gnr := Gnr
+                           } = Data0) ->
+  NewGnr = Gnr + 1,
+  ?DBG(Data0, "Bumpped generation number to ~p", [NewGnr]),
+  self() ! ?vote_rsp(MyId, NewGnr, true),
+  Data = Data0#{ current_gnr := NewGnr
                , voted_for := MyId
                },
   ok = persist_role_state(Data),
   Data.
 
 send_vote_request_to_peers(#{ my_id := MyId
-                            , current_epoch := Epoch
+                            , current_gnr := Gnr
                             } = Data) ->
   Lid = get_last_lid(Data),
-  Msg = ?vote_req(MyId, Epoch, Lid),
+  Msg = ?vote_req(MyId, Gnr, Lid),
   ok = broadcast(Data, Msg).
 
 count_votes(#{votes := Votes} = Data) ->
@@ -484,25 +484,25 @@ get_last_lid(Rlog) -> raft_rlog:get_last_lid(Rlog).
 get_last_committed_lid(#{rlog := Rlog}) -> get_last_committed_lid(Rlog);
 get_last_committed_lid(Rlog) -> raft_rlog:get_last_committed_lid(Rlog).
 
-maybe_grant_vote(Id, Epoch, Lid, Data) ->
+maybe_grant_vote(Id, Gnr, Lid, Data) ->
   case is_from_valid_peer(Id, Data) of
     true ->
-      maybe_grant_vote_1(Id, Epoch, Lid, Data);
+      maybe_grant_vote_1(Id, Gnr, Lid, Data);
     false ->
       ?INF(Data, "Discarded vote request from invalid peer ~p", [Id]),
       {false, Data}
   end.
 
-maybe_grant_vote_1(Id, Epoch, Lid, #{current_epoch := MyEpoch} = Data0) ->
-  case compare_epoch(Epoch, MyEpoch) of
+maybe_grant_vote_1(Id, Gnr, Lid, #{current_gnr := MyGnr} = Data0) ->
+  case compare_gnr(Gnr, MyGnr) of
     ?older ->
       ?DBG(Data0, "Reject vote request from ~p\n"
-           "because epoch ~p < my-epoch ~p", [Id, Epoch, MyEpoch]),
+           "because generation ~p < my-generation ~p", [Id, Gnr, MyGnr]),
       {false, Data0};
     ?same ->
       maybe_grant_vote_2(Id, Lid, Data0);
     ?newer ->
-      Data = update_epoch(Id, Epoch, Data0),
+      Data = update_gnr(Id, Gnr, Data0),
       maybe_grant_vote_2(Id, Lid, Data)
   end.
 
@@ -516,8 +516,8 @@ maybe_grant_vote_2(Id, PeerLid, Data0) ->
     true ->
       Data = Data0#{voted_for := Id},
       %% persist role state before replying vote request
-      %% otherwise there is a risk of double voting in the same epoch
-      %% if I crash and restart
+      %% otherwise there is a risk of double voting in the same
+      %% gneration if I crash and restart
       ok = persist_role_state(Data),
       ?DBG(Data, "Grant vote to ~p", [Id]),
       {true, Data};
@@ -529,30 +529,30 @@ maybe_grant_vote_2(Id, PeerLid, Data0) ->
   end.
 
 %% Id is only for logging
-maybe_update_epoch(Id, Epoch, #{current_epoch := MyEpoch} = Data) ->
-  case compare_epoch(Epoch, MyEpoch) of
-    ?newer -> {true, update_epoch(Id, Epoch, Data)};
+maybe_update_gnr(Id, Gnr, #{current_gnr:= MyGnr} = Data) ->
+  case compare_gnr(Gnr, MyGnr) of
+    ?newer -> {true, update_gnr(Id, Gnr, Data)};
     _ -> {false, Data}
   end.
 
-update_epoch(Id, Epoch, Data) ->
-  ?DBG(Data, "Newer epoch [~p] received from ~p", [Epoch, Id]),
-  NewData = Data#{ current_epoch := Epoch
+update_gnr(Id, Gnr, Data) ->
+  ?DBG(Data, "Newer generation number [~p] received from ~p", [Gnr, Id]),
+  NewData = Data#{ current_gnr := Gnr
                  , voted_for := ?none
                  },
   ok = persist_role_state(NewData),
   NewData.
 
-compare_epoch(Epoch, Epoch) -> ?same;
-compare_epoch(Others, Mine) ->
+compare_gnr(Gnr, Gnr) -> ?same;
+compare_gnr(Others, Mine) ->
   case Others < Mine of
     true -> ?older;
     false -> ?newer
   end.
 
 %% Return 'true' if other's last lid is up-to-date comparing to mine.
-is_up_to_date(?LID(PeerEpoch, PeerIndex), ?LID(MyEpoch, MyIndex)) ->
-  case compare_epoch(PeerEpoch, MyEpoch) of
+is_up_to_date(?LID(PeerGnr, PeerIndex), ?LID(MyGnr, MyIndex)) ->
+  case compare_gnr(PeerGnr, MyGnr) of
     ?same  -> PeerIndex >= MyIndex;
     ?older -> false;
     ?newer -> true

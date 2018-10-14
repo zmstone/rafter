@@ -29,9 +29,9 @@
 -type cfg_key() :: my_cfg_key() | raft_rlog_segs:cfg_key().
 -type cfg() :: #{cfg_key() => term()}.
 -type dir() :: string().
--type epoch() :: raft:epoch().
--type index() :: raft:index().
--type entry() :: {index(), raft_rlog_segs:entry()}.
+-type gnr() :: raft:gnr().
+-type idx() :: raft:idx().
+-type entry() :: {idx(), raft_rlog_segs:entry()}.
 -opaque rlog() :: #{ cfg := my_cfg()
                    , segs := raft_rlog_segs:segs()
                    , commit_lid :=  lid()
@@ -69,10 +69,10 @@ get_last_committed_lid(#{commit_lid := Lid}) ->
   Lid.
 
 %% @doc Append log entries.
--spec append(rlog(), [{epoch(), [entry()]}]) -> rlog().
+-spec append(rlog(), [{gnr(), [entry()]}]) -> rlog().
 append(Rlog, []) -> Rlog;
-append(Rlog, [{Epoch, Entries} | Rest]) ->
-  NewRlog = raft_rlog_segs:append(Rlog, Epoch, Entries),
+append(Rlog, [{Gnr, Entries} | Rest]) ->
+  NewRlog = raft_rlog_segs:append(Rlog, Gnr, Entries),
   append(NewRlog, Rest).
 
 %% @doc Commit log
