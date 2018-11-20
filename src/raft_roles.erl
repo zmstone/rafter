@@ -49,6 +49,7 @@
                  , stable_members := [member_id()]
                  , voted_for := ?none
                  , votes := [member_id()]
+                 , stm := raft_stm:stm()
                  }.
 
 %% internal actions
@@ -115,8 +116,10 @@ loading(enter, _OldState, Data) ->
   {keep_state, Data};
 loading(internal, {?load_raft_state, Cfg}, #{rlog := ?not_initialized} = Data0) ->
   Rlog = raft_rlog:open(data_dir(Cfg), Cfg),
-  Data1 = load_raft_state(Data0#{rlog := Rlog}, Cfg),
-  Data = spawn_connectors(Data1),
+  Data1 = load_role_state(Data0#{rlog := Rlog}, Cfg),
+  {StmMod, StmCfg} = maps:get(?stm_implementation, Cfg, ?STM_IMPLEMENTATION),
+  Data2 = load_stm(Data1, StmMod, StmCfg),
+  Data = spawn_connectors(Data2),
   next_state(?follower, Data).
 %% Intended: do not call common/4 as 'default' for ?loading state.
 
@@ -367,8 +370,8 @@ handle_peer_down(PeerId, #{peers := Peers0, leader_id := LeaderId} = Data) ->
 
 data_dir(Cfg) -> maps:get(?data_dir, Cfg).
 
--spec load_raft_state(data(), cfg()) -> data().
-load_raft_state(#{stable_members := Members0} = Data0, Cfg) ->
+-spec load_role_state(data(), cfg()) -> data().
+load_role_state(#{stable_members := Members0} = Data0, Cfg) ->
   StateDir = filename:join([data_dir(Cfg), "states"]),
   ok = filelib:ensure_dir(filename:join(StateDir, "foo")),
   ?LID(Gnr, _) = get_last_lid(Data0),
@@ -391,6 +394,10 @@ load_raft_state(#{stable_members := Members0} = Data0, Cfg) ->
            , changing_member := ChangingMember
            }
   end.
+
+load_stm(Data, StmMod, StmCfg) ->
+  Stm = raft_stm:load(StmMod, StmCfg),
+  Data#{stm => Stm}.
 
 get_initial_members(Module, Cfg) ->
   L = maps:get(?initial_members, Cfg),

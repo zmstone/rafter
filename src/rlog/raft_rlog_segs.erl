@@ -59,11 +59,6 @@
           IDX:64/unsigned-integer,
           REST/binary>>).
 -define(V0_BODY_BYTES(Size), (Size + ?IDX_BYTES)).
--define(ASSERT(Expr, Error),
-        case Expr of
-          true -> ok;
-          false -> erlang:error(Error)
-        end).
 
 -spec cfg_keys() -> [cfg_key()].
 cfg_keys() -> [?rlog_seg_bytes].
@@ -105,7 +100,7 @@ append(Segs, Gnr, Entries) ->
    , last_lid  := ?LID(LastGnr, LastIdx)
    , base_lids := BaseLids
    } = Segs,
-  ?ASSERT(LastGnr =< Gnr, {non_monotonic_generation_nr, #{last => LastGnr, got => Gnr}}),
+  ok = ?ASSERT_MONOTONIC_GNR(LastGnr, Gnr),
   {Idx, _} = hd(Entries),
   {NewLastLid, IoData} = encode_entries(LastIdx, Entries, []),
   case is_new_segment(Segs, Gnr) of
@@ -196,7 +191,7 @@ find_base_lid([?LID(Gnr, BaseIdx) | Rest], Idx) ->
 encode_entries(LastIdx, [], Acc) ->
   {LastIdx, lists:reverse(Acc)};
 encode_entries(LastIdx, [{Idx, Entry} | Rest], Acc0) ->
-  ?ASSERT(LastIdx + 1 =:= Idx, {non_consecutive_index, #{last => LastIdx, got => Idx}}),
+  ok = ?ASSERT_CONSECUTIVE_IDX(LastIdx, Idx),
   Acc = [encode_entry(Idx, Entry) | Acc0],
   encode_entries(Idx, Rest, Acc).
 

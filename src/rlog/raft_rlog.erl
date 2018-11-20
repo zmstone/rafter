@@ -19,6 +19,7 @@
              , cfg_key/0
              , cfg/0
              , entry/0
+             , raw_log_entry/0
              ]).
 
 -include("raft_int.hrl").
@@ -31,7 +32,8 @@
 -type dir() :: string().
 -type gnr() :: raft:gnr().
 -type idx() :: raft:idx().
--type entry() :: {idx(), raft_rlog_segs:entry()}.
+-type raw_log_entry() :: raft_rlog_segs:entry().
+-type entry() :: {idx(), raw_log_entry()}.
 -opaque rlog() :: #{ cfg := my_cfg()
                    , segs := raft_rlog_segs:segs()
                    , commit_lid :=  lid()

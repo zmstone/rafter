@@ -15,4 +15,19 @@
 -define(log_error(Fmt, Args), logger:error(Fmt, Args)).
 
 -define(IS_MAJORITY(Count, Total), (Count > (Total) div 2)).
+
+-define(ASSERT(Expr, Error),
+        case Expr of
+          true -> ok;
+          false -> erlang:error(Error)
+        end).
+
+-define(ASSERT_MONOTONIC_GNR(LastGnr, Gnr),
+        ?ASSERT(LastGnr =< Gnr,
+                {non_monotonic_generation_nr, #{last => LastGnr, got => Gnr}})).
+
+-define(ASSERT_CONSECUTIVE_IDX(LastIdx, Idx),
+        ?ASSERT(LastIdx + 1 =:= Idx,
+                {non_consecutive_index, #{last => LastIdx, got => Idx}})).
+
 -endif.

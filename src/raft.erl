@@ -7,7 +7,8 @@
 -type idx() :: integer().
 -type gnr() :: integer().
 -type lid() :: {gnr(), idx()}.
--type wal() :: binary().
+-type op() :: raft_stm:op().
+-type wal() :: raft_rlog:raw_log_entry().
 -type member_id() :: raft_peers:id().
 
 start(Cfg) -> raft_roles:start(Cfg).
